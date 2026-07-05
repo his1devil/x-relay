@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>HALX</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <!-- Only standard/exempt encryption (AES via CryptoKit for relay E2E) — avoids
+         the per-build export-compliance prompt that blocks TestFlight builds. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- Must be the ONLY ATS key: on iOS 10+ the presence of any granular
+             key (NSAllowsLocalNetworking / WebContent / Media) makes the OS
+             IGNORE NSAllowsArbitraryLoads. We need plain ws:// to a PUBLIC relay
+             IP allowed, so keep this alone. -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Connect to your Mac running the Claude Remote agent over the local network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_xrelay._tcp</string>
+    </array>
+    <key>NSCameraUsageDescription</key>
+    <string>Scan the pairing QR code shown by the Claude Remote agent on your Mac.</string>
+    <key>UIAppFonts</key>
+    <array>
+        <string>HankenGrotesk-VF.ttf</string>
+        <string>JetBrainsMono-Regular.ttf</string>
+        <string>JetBrainsMono-Medium.ttf</string>
+        <string>JetBrainsMono-SemiBold.ttf</string>
+        <string>JetBrainsMono-Bold.ttf</string>
+    </array>
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string></string>
+    </dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UIUserInterfaceStyle</key>
+    <string>Dark</string>
+</dict>
+</plist>

@@ -1,0 +1,102 @@
+import SwiftUI
+import Combine
+import ExyteChat
+
+/// Bridges ThreadModel's timeline to exyte/Chat with a hard split between
+/// MEMBERSHIP and CONTENT:
+///
+/// - `messages` (+ `rev`) change only when rows are added/removed — the ONLY thing
+///   the UITableView is asked to animate. Content-only reparse ticks don't touch
+///   the table at all (row reloads mid-stream caused visible text ghosting as the
+///   old and new cell overlapped during the height change).
+/// - `itemsById` is @Published: each visible `MessageCell` observes the adapter and
+///   redraws its OWN content in place; UIHostingConfiguration self-sizes the cell.
+///   Streaming growth therefore renders like SwiftUI, not like table reloads.
+/// - O(1) row lookup for the message builder (was O(n) per cell).
+@MainActor
+final class ExyteThreadAdapter: ObservableObject {
+    @Published private(set) var messages: [ExyteChat.Message] = []
+    @Published private(set) var rev = 0
+    /// Row content by id — @Published so on-screen cells re-render in place.
+    @Published private(set) var itemsById: [String: TimelineItem] = [:]
+    /// Snapshot of the optimistic echo text (read by its cell — self-contained so
+    /// the cell never renders empty while the row removal is still in flight).
+    private(set) var optimisticText: String?
+    /// The id appended at the TAIL by the latest membership change (+ when) — lets
+    /// only the newest cell pop in with a spring; history load & cell reuse stay inert.
+    private(set) var lastAppendedId: String?
+    private(set) var lastAppendAt = Date.distantPast
+    private var didInitialLoad = false
+
+    private let meUser: ExyteChat.User
+    private let agentUser: ExyteChat.User
+    private let systemUser: ExyteChat.User
+
+    private var lastIds: [String] = []
+    private var bag = Set<AnyCancellable>()
+
+    init(model: ThreadModel, session: Session) {
+        meUser = .init(id: "me", name: "You", avatarURL: nil, isCurrentUser: true)
+        agentUser = .init(id: "agent", name: session.agent.short, avatarURL: nil, isCurrentUser: false)
+        systemUser = .init(id: "system", name: "System", avatarURL: nil, type: .system)
+        model.$items
+            .combineLatest(model.$optimisticUser)
+            .sink { [weak self] items, optimistic in
+                self?.rebuild(items, optimistic: optimistic)
+            }
+            .store(in: &bag)
+    }
+
+    private func user(for item: TimelineItem) -> ExyteChat.User {
+        switch item {
+        case .user: return meUser
+        case .assistant: return agentUser
+        case .system, .dateDivider: return systemUser
+        }
+    }
+
+    private func rebuild(_ items: [TimelineItem], optimistic: String?) {
+        let spid = Perf.begin("adapterRebuild")
+        var dict = [String: TimelineItem](minimumCapacity: items.count)
+        var ids: [String] = []
+        ids.reserveCapacity(items.count + 1)
+        for item in items {
+            dict[item.id] = item
+            ids.append(item.id)
+        }
+        optimisticText = optimistic
+        itemsById = dict   // content channel: on-screen cells observe + redraw in place
+
+        if let opt = optimistic, !opt.isEmpty { ids.append("cr-optimistic") }
+
+        // Membership channel: touch `messages`/`rev` (→ table diff) only when rows
+        // were actually added or removed.
+        guard ids != lastIds else {
+            Perf.end("adapterRebuild", spid, "content n=\(items.count)")
+            return
+        }
+        // Tail-append detection for the pop-in: exactly one new id at the end,
+        // after the initial load (a freshly opened thread must NOT ripple).
+        if didInitialLoad, ids.count == lastIds.count + 1, ids.dropLast().elementsEqual(lastIds) {
+            lastAppendedId = ids.last
+            lastAppendAt = Date()
+        }
+        didInitialLoad = true
+        lastIds = ids
+
+        // createdAt is synthesized monotonically from display order — the transcript
+        // is already ordered, and real record times are unreliable/absent.
+        let base = Date(timeIntervalSince1970: 1_600_000_000)
+        var out: [ExyteChat.Message] = []
+        out.reserveCapacity(items.count + 1)
+        for (i, item) in items.enumerated() {
+            out.append(ExyteChat.Message(id: item.id, user: user(for: item), createdAt: base.addingTimeInterval(Double(i))))
+        }
+        if let opt = optimistic, !opt.isEmpty {
+            out.append(ExyteChat.Message(id: "cr-optimistic", user: meUser, createdAt: base.addingTimeInterval(Double(items.count))))
+        }
+        messages = out
+        rev += 1
+        Perf.end("adapterRebuild", spid, "rows n=\(out.count)")
+    }
+}
