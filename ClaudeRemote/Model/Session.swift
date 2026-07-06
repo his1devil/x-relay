@@ -45,6 +45,9 @@ struct Session: Identifiable, Hashable {
     /// still readable, but the composer is disabled (preview-only). Default true so
     /// an older agent (no `canDrive` field) keeps its previous behavior.
     var canDrive: Bool = true
+    /// The pane's agent process is actually running (vs. the pane sitting at a
+    /// bare shell after the agent exited). Old vibTTY doesn't send it → true.
+    var agentAlive: Bool = true
 
     /// The session's project dir HAS a live vibTTY pane, but this specific session
     /// isn't the one loaded in it (an older session in the same directory). Lets the

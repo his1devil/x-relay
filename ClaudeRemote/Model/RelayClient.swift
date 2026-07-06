@@ -72,7 +72,9 @@ final class RelayClient: ObservableObject {
     /// PAC (URLSession honours it by default and it silently breaks the ws connect on
     /// some carrier/corporate networks — the same trap vibTTY hit), and fail fast so
     /// our own reconnect logic drives recovery instead of URLSession's ~60s hang.
-    private let urlSession: URLSession = {
+    private var urlSession: URLSession = RelayClient.makeSession()
+
+    private static func makeSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
         cfg.connectionProxyDictionary = [:]
         cfg.waitsForConnectivity = false
@@ -82,13 +84,31 @@ final class RelayClient: ObservableObject {
         // on mobile data). Liveness is ours (ka-based, 22s) + 12s connect watchdog.
         cfg.timeoutIntervalForRequest = 120
         return URLSession(configuration: cfg)
-    }()
+    }
+
+    /// After a network transition/suspension, URLSession's pool can go ZOMBIE:
+    /// every new task resumes but no callback ever fires — not even an error —
+    /// so nothing reaches the wire (the relay sees zero joins) while the app
+    /// cycles "Reconnecting…" forever. Only a fresh session recovers; a cold
+    /// app launch "fixing it" was exactly this. Invalidate + rebuild.
+    private func rebuildSession(_ why: String) {
+        NSLog("[xrelay] rebuilding URLSession (%@)", why)
+        urlSession.invalidateAndCancel()
+        urlSession = Self.makeSession()
+    }
     private var task: URLSessionWebSocketTask?
     private var connectWatchdog: DispatchWorkItem?
     private var handlers: [String: (ThreadUpdate) -> Void] = [:]
     private var subscribed: Set<String> = []
     private var reconnectAttempts = 0
     private var intentionalClose = false
+    /// Consecutive connect attempts that died in `.connecting` (watchdog fired).
+    /// 2+ in a row = the session pool itself is suspect → rebuild it.
+    private var consecutiveStalls = 0
+    /// Real progress only (frame received / went online) — NEVER refreshed by
+    /// connect() itself, so the deep-rescue clock can't be starved by a
+    /// watchdog→reconnect cycle that goes nowhere.
+    private var lastProgressAt = Date()
 
     // Liveness: a dead/half-open socket (network switch, sleep) does NOT make
     // `task.receive` fail — it just hangs. So we actively probe with WebSocket
@@ -167,6 +187,8 @@ final class RelayClient: ObservableObject {
         task = t
         t.resume()
         lastRxAt = Date()
+        // NOTE: lastProgressAt is deliberately NOT touched here — only real
+        // received frames count as progress (see deep rescue).
         // `join` establishes the room; it's queued and flushed once the socket opens.
         // The session `list` + re-subscribe are sent from `requestListAndResubscribe()`
         // the moment the first received frame confirms we're actually online — sending
@@ -192,7 +214,13 @@ final class RelayClient: ObservableObject {
         connectWatchdog?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.state == .connecting, !self.intentionalClose else { return }
-            self.forceReconnect("connect stalled (no open in 12s)")
+            self.consecutiveStalls += 1
+            if self.consecutiveStalls >= 2 {
+                // Two stalls back-to-back: assume a poisoned pool, not a slow
+                // network — rebuilding is cheap and idempotent.
+                self.rebuildSession("connect stalled ×\(self.consecutiveStalls)")
+            }
+            self.forceReconnect("connect stalled (no open in 12s, ×\(self.consecutiveStalls))")
         }
         connectWatchdog = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
@@ -261,9 +289,13 @@ final class RelayClient: ObservableObject {
         // We rely on the relay's `ka` beacon (every 10s) to keep `lastRxAt` fresh
         // on a live link; this just watches for it going stale. (No WS sendPing —
         // its pong callback is unreliable on iOS and caused false reconnects.)
-        heartbeat = Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 7, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.checkLiveness() }
         }
+        // .common, NOT default: a scheduledTimer pauses while the user scrolls
+        // (UITracking mode) — the watchdog heartbeat must never pause.
+        RunLoop.main.add(t, forMode: .common)
+        heartbeat = t
     }
 
     private func stopHeartbeat() {
@@ -280,17 +312,20 @@ final class RelayClient: ObservableObject {
             }
             return
         }
-        // NOT online. One-shot recovery paths can be swallowed by races (the
-        // backoff retry guarded on a state another path changed; the connect
-        // watchdog landing inside forceReconnect's debounce) — leaving task stuck,
-        // state=.connecting and NO timer alive: the endless "Reconnecting…". This
-        // heartbeat repeats every 7s and cannot be swallowed: no progress for 30s
-        // → hard-reset and reconnect.
-        if idle > 30 {
-            NSLog("[xrelay] stalled-reconnect rescue (idle %.0fs)", idle)
-            task?.cancel(with: .goingAway, reason: nil)
+        // NOT online. One-shot recovery paths can be swallowed by races — and
+        // worse, a watchdog→forceReconnect→connect cycle refreshes lastRxAt
+        // every ~12s, which STARVED the old 30s rescue while zombie tasks
+        // burned forever. This deep rescue clocks on lastProgressAt (real
+        // frames only): 40s with zero progress → nuke the session pool and
+        // start truly fresh. Repeats every 40s for as long as we're down.
+        let stalled = Date().timeIntervalSince(lastProgressAt)
+        if stalled > 40 {
+            NSLog("[xrelay] deep rescue: no progress %.0fs — full session reset", stalled)
+            task?.cancel()
             task = nil
-            lastRxAt = Date()   // restart the stall clock for the fresh attempt
+            rebuildSession("deep rescue")
+            lastProgressAt = Date()   // pace the next deep rescue, NOT starved by connect()
+            lastRxAt = Date()
             connect()
         }
     }
@@ -439,6 +474,8 @@ final class RelayClient: ObservableObject {
                 switch result {
                 case let .success(message):
                     self.lastRxAt = Date()
+                    self.lastProgressAt = Date()   // REAL progress — feeds the deep rescue
+                    self.consecutiveStalls = 0
                     if self.state != .online {
                         self.lastError = ""
                         self.state = .online
@@ -580,6 +617,7 @@ final class RelayClient: ObservableObject {
             agent: AgentKind.from(dict["agent"] as? String),
             model: (dict["model"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             canDrive: (dict["canDrive"] as? Bool) ?? true,
+            agentAlive: (dict["agentAlive"] as? Bool) ?? true,
             cwdLive: (dict["cwdLive"] as? Bool) ?? false
         )
     }

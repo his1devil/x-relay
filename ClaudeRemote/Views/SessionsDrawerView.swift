@@ -912,6 +912,15 @@ private struct ChannelRow: View {
                 Text("Connected")
                     .font(AppFont.sans(11, .semibold))
                     .foregroundStyle(theme.greenText)
+            } else if session.isRemote && session.cwdLive && !session.agentAlive {
+                // Pane is open but the agent EXITED (bare shell) — distinct from
+                // both Connected and Preview so it's obvious why send is off.
+                Image(systemName: "terminal")
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.faint)
+                Text("Shell")
+                    .font(AppFont.sans(11))
+                    .foregroundStyle(theme.faint)
             } else if session.isRemote {
                 Image(systemName: session.isSupersededPreview ? "clock.arrow.circlepath" : "eye")
                     .font(.system(size: 9))

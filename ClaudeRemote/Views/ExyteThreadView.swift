@@ -304,7 +304,7 @@ private struct Composer: View {
         #if DEBUG
         if ProcessInfo.processInfo.environment["CR_MOCK"] != nil { return false }
         #endif
-        return session.isPreview
+        return live.isPreview
     }
 
     @ViewBuilder
@@ -360,10 +360,17 @@ private struct Composer: View {
         return "Model"
     }
 
+    /// Live view of this session (list pushes refresh it); falls back to the
+    /// opening snapshot until the first push lands.
+    private var live: Session { model.liveSession ?? session }
+
     private var placeholder: String {
         if !session.isRemote { return "Read-only · pair a Mac to reply" }
-        if !session.canDrive {
-            return session.cwdLive
+        if live.cwdLive && !live.agentAlive {
+            return "Agent exited — restart claude/codex in vibTTY to reply"
+        }
+        if !live.canDrive {
+            return live.cwdLive
                 ? "Preview · a newer session is active in this project — open the latest to reply"
                 : "Preview only · not open in vibTTY — resume it there to reply"
         }
@@ -371,6 +378,7 @@ private struct Composer: View {
     }
 
     private func doSend() {
+        guard live.canDrive else { return }
         guard canSend(params.text.wrappedValue) else { return }
         Haptics.light()
         sendTick.toggle()
@@ -405,7 +413,7 @@ private struct Composer: View {
                         .overlay(Circle().stroke(theme.border.opacity(0.6), lineWidth: 1))
                 }
                 .disabled(typingDisabled)
-                if session.isRemote && session.canDrive {
+                if session.isRemote && live.canDrive {
                     if supportsModelSwitch {
                         selectorChip(icon: "cpu", label: modelChipLabel) {
                             Haptics.selection(); showModelSheet = true

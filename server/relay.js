@@ -141,10 +141,18 @@ setInterval(() => {
     // for a full sweep is a half-open corpse from a network switch — terminate it
     // so it stops holding a per-IP slot and a stale room membership. (This was
     // missing: dead sockets lingered until the kernel's ~15min TCP timeout.)
+    // Grace: 4 strikes (~40s) before reaping. One missed sweep (20s window)
+    // was too eager for cellular — an RRC wake-up can stall pongs past 20s and
+    // the phone got reaped while merely dozing, forcing a full rejoin.
     if (ws.isAlive === false) {
-      console.log(`[reap] dead peer ip=${ws.ip} room=${ws.room || "-"} role=${ws.role || "-"}`);
-      try { ws.terminate(); } catch {}
-      continue;
+      ws.deadSweeps = (ws.deadSweeps || 0) + 1;
+      if (ws.deadSweeps >= 4) {
+        console.log(`[reap] dead peer ip=${ws.ip} room=${ws.room || "-"} role=${ws.role || "-"} sweeps=${ws.deadSweeps}`);
+        try { ws.terminate(); } catch {}
+        continue;
+      }
+    } else {
+      ws.deadSweeps = 0;
     }
     ws.isAlive = false;
     try { ws.ping(); } catch {}

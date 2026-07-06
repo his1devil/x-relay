@@ -24,6 +24,10 @@ final class ThreadModel: ObservableObject {
     }
     @Published var jumpHint: JumpHint?
     @Published var listedIds: Set<String> = []   // for the banner's "ready" state
+    /// Live copy of THIS session from the latest pushed list — the thread was
+    /// opened with a value snapshot, so agent exit/restart while it's on screen
+    /// must flow through here (badge + composer react in real time).
+    @Published var liveSession: Session?
     @Published var pendingPermissions: [PermissionRequest] = []
     @Published var gridFrame: String?         // latest terminal-mirror grid (P4)
     @Published var revision = 0               // bumped on every (re)parse — drives stream-scroll
@@ -99,6 +103,11 @@ final class ThreadModel: ObservableObject {
                 .map { Set($0.map(\.id)) }
                 .removeDuplicates()
                 .sink { [weak self] ids in self?.listedIds = ids }
+                .store(in: &stateBag)
+            relay?.$sessions
+                .compactMap { [sessionId] list in list.first { $0.id == sessionId } }
+                .removeDuplicates { $0.canDrive == $1.canDrive && $0.agentAlive == $1.agentAlive }
+                .sink { [weak self] s in self?.liveSession = s }
                 .store(in: &stateBag)
             relay?.subscribe(id: sessionId) { [weak self] update in
                 guard let self else { return }
