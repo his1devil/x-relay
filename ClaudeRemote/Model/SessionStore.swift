@@ -209,12 +209,17 @@ final class SessionStore: ObservableObject {
     }
 
     nonisolated private static func bundledJSONLURLs() -> [URL] {
+        // DEBUG-only: demo transcripts are a development convenience. A release
+        // build must NEVER ship (or surface) bundled conversations — a fresh
+        // install showed the developer's own sessions to brand-new users.
+        #if DEBUG
         if let u = Bundle.main.urls(forResourcesWithExtension: "jsonl", subdirectory: nil), !u.isEmpty { return u }
         if let u = Bundle.main.urls(forResourcesWithExtension: "jsonl", subdirectory: "Fixtures"), !u.isEmpty { return u }
         if let resURL = Bundle.main.resourceURL,
            let en = FileManager.default.enumerator(at: resURL, includingPropertiesForKeys: nil) {
             return en.compactMap { $0 as? URL }.filter { $0.pathExtension == "jsonl" }
         }
+        #endif
         return []
     }
 

@@ -15,3 +15,4 @@ ClaudeRemote.xcodeproj/
 # ~/.claude transcripts — keep them out of version control.
 ClaudeRemote/Resources/Fixtures/*.jsonl
 build-device/
+.dev-fixtures/
