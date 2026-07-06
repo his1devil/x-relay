@@ -289,20 +289,30 @@ struct UserMessageView: View {
 
     private struct IdentifiedImage: Identifiable { let id = UUID(); let image: UIImage }
 
+    @ObservedObject private var profile = ProfileStore.shared
+
     var body: some View {
-        // Left-aligned tinted bubble (same side as the agent), capped at ~2/3
-        // width; the timestamp sits at the SCREEN'S right edge — the same fixed
-        // column as the agent header's stamp — so times align down the thread
-        // regardless of bubble width.
-        HStack(alignment: .top, spacing: 8) {
-            bubble
-                .frame(maxWidth: 262, alignment: .leading)
-            Spacer(minLength: 8)
-            Text(TimeFormat.messageStamp(message.time))
-                .font(AppFont.sans(11))
-                .foregroundStyle(theme.faint)
-                .lineLimit(1)
-                .padding(.top, 6)
+        // Discord/Claude-Code author layout: avatar + nickname + time (time to
+        // the RIGHT of the name), then the message body beneath — the user's
+        // identity shows on every message, never elided.
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                UserAvatar(size: 24)
+                Text(profile.nickname)
+                    .font(AppFont.sans(15, .bold))
+                    .foregroundStyle(theme.white)
+                    .fixedSize()
+                Text(TimeFormat.messageStamp(message.time))
+                    .font(AppFont.sans(11))
+                    .foregroundStyle(theme.faint)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            HStack(spacing: 0) {
+                bubble.frame(maxWidth: 300, alignment: .leading)
+                Spacer(minLength: 8)
+            }
+            .padding(.leading, 32)   // align body under the name, past the avatar
         }
         .padding(.horizontal, 14)
         .padding(.top, 8)

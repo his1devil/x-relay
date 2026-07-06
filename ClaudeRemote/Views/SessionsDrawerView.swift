@@ -80,6 +80,7 @@ struct SessionsDrawerView: View {
     @Namespace private var segNS
     @Namespace private var chipNS
     @State private var searchText = ""
+    @ObservedObject private var profile = ProfileStore.shared
     @FocusState private var searchFocused: Bool
     @AppStorage("cr.grouping") private var groupingRaw = Grouping.recent.rawValue
     private var grouping: Grouping { Grouping(rawValue: groupingRaw) ?? .recent }
@@ -109,7 +110,7 @@ struct SessionsDrawerView: View {
     @AppStorage("cr.lastSessionId") private var lastSessionId = ""
 
     private enum ActiveSheet: Int, Identifiable {
-        case new, pairing
+        case new, pairing, profile
         var id: Int { rawValue }
     }
 
@@ -197,6 +198,7 @@ struct SessionsDrawerView: View {
                 switch which {
                 case .new: NewSessionView()
                 case .pairing: PairingView()
+                case .profile: ProfileSheet()
                 }
             }
             .environment(\.theme, theme)
@@ -698,16 +700,22 @@ struct SessionsDrawerView: View {
     /// Rail bottom: user identity on the left, pair-a-Mac on the right — one row.
     private var railBottomBar: some View {
         HStack(spacing: 9) {
-            ZStack(alignment: .bottomTrailing) {
-                Circle().fill(theme.blurple).frame(width: 32, height: 32)
-                    .overlay(Text("ME").font(AppFont.mono(11, .semibold)).foregroundStyle(.white))
-                Circle().fill(footerColor).frame(width: 11, height: 11)
-                    .overlay(Circle().stroke(theme.codebg, lineWidth: 2.5))
+            Button { Haptics.selection(); sheet = .profile } label: {
+                HStack(spacing: 9) {
+                    ZStack(alignment: .bottomTrailing) {
+                        UserAvatar(size: 32)
+                        Circle().fill(footerColor).frame(width: 11, height: 11)
+                            .overlay(Circle().stroke(theme.codebg, lineWidth: 2.5))
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(profile.nickname).font(AppFont.sans(13, .semibold))
+                            .foregroundStyle(theme.white).lineLimit(1)
+                        Text(footerStatus).font(AppFont.mono(10)).foregroundStyle(theme.muted).lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Text("you").font(AppFont.sans(13, .semibold)).foregroundStyle(theme.white)
-                Text(footerStatus).font(AppFont.mono(10)).foregroundStyle(theme.muted).lineLimit(1)
-            }
+            .buttonStyle(PressableStyle(scale: 0.98))
             Spacer(minLength: 4)
             Button { sheet = .pairing } label: {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
