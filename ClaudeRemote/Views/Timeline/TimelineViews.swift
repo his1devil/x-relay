@@ -308,11 +308,8 @@ struct UserMessageView: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
             }
-            HStack(spacing: 0) {
-                bubble.frame(maxWidth: 300, alignment: .leading)
-                Spacer(minLength: 8)
-            }
-            .padding(.leading, 32)   // align body under the name, past the avatar
+            bubble
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.top, 8)
@@ -330,7 +327,7 @@ struct UserMessageView: View {
                 imageGrid
             }
             if !body.isEmpty {
-                RichText(text: body, color: theme.ink, hugging: true)
+                RichText(text: body, color: theme.ink)
             }
             if !attachments.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -350,13 +347,6 @@ struct UserMessageView: View {
                     }
                 }
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(theme.blurple.opacity(0.16), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(theme.blurple.opacity(0.30), lineWidth: 1)
         }
     }
 
