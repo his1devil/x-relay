@@ -42,9 +42,15 @@ struct ExyteThreadView: View {
                     ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
                     if session.isRemote && !model.firstScreenReady {
                         MessageSkeleton()   // curtain: up until the newest ~1.5 screens are assembled
-                            .transaction { $0.animation = nil }   // hard cut, no fade
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .background(theme.screen)          // OPAQUE: the list assembling
+                                                               // underneath must not shimmer through
+                            .transition(.identity)             // and the un-cover is a hard cut
                     } else if model.isLoading && adapter.messages.isEmpty {
                         MessageSkeleton()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .background(theme.screen)
+                            .transition(.identity)
                     }
                 }
             }
