@@ -505,6 +505,10 @@ struct SessionsDrawerView: View {
                                             .matchedGeometryEffect(id: "chip-active", in: chipNS)
                                     }
                                 }
+                                // Light mode lifts controls off the white
+                                // ground with a soft drop; invisible in dark.
+                                .shadow(color: .black.opacity(theme.isDark ? 0 : 0.10),
+                                        radius: 2.5, y: 1)
                             }
                             .contentShape(Capsule())
                         }
@@ -553,6 +557,7 @@ struct SessionsDrawerView: View {
         }
         .padding(3)
         .background(theme.codebg, in: RoundedRectangle(cornerRadius: 9))
+        .shadow(color: .black.opacity(theme.isDark ? 0 : 0.10), radius: 2.5, y: 1)
         .padding(.horizontal, 10)
         .padding(.bottom, 4)
     }
@@ -578,6 +583,7 @@ struct SessionsDrawerView: View {
         .padding(.horizontal, 10)
         .frame(height: 34)
         .background(theme.codebg, in: RoundedRectangle(cornerRadius: 6))
+        .shadow(color: .black.opacity(theme.isDark ? 0 : 0.10), radius: 2.5, y: 1)
         // Tapping ANYWHERE on the pill focuses the field — not just the text glyphs.
         .contentShape(Rectangle())
         .onTapGesture { searchFocused = true }
