@@ -40,8 +40,11 @@ struct ExyteThreadView: View {
             } else {
                 ZStack {
                     ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
-                    if model.isLoading && adapter.messages.isEmpty {
-                        MessageSkeleton()   // transcript on its way — shaped placeholder, not a blank
+                    if session.isRemote && !model.firstScreenReady {
+                        MessageSkeleton()   // curtain: up until the newest ~1.5 screens are assembled
+                            .transition(.opacity)
+                    } else if model.isLoading && adapter.messages.isEmpty {
+                        MessageSkeleton()
                     }
                 }
             }
@@ -120,7 +123,10 @@ private struct ChatPane: View {
                     theme: theme,
                     optimisticText: model.optimisticUser,
                     hasMoreHistory: model.hasMoreHistory,
-                    onReachTop: { [weak model] in model?.mountOlderIfNeeded() },
+                    loadingOlder: model.loadingOlder,
+                    mountTick: model.mountTick,
+                    onPullHistory: { [weak model] in model?.pullOlderHistory() },
+                    onPullSettled: { [weak model] in model?.executePull() },
                     onAtBottomChanged: { b in
                         atBottom = b
                         if b { newBelow = false }

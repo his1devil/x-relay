@@ -76,6 +76,11 @@ final class ThreadModel: ObservableObject {
     }
 
     func start() {
+        firstScreenReady = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, !self.firstScreenReady else { return }
+            if !self.items.isEmpty { self.revealFirstScreen() }
+        }
         guard !started else { return }
         started = true
         #if DEBUG
@@ -118,6 +123,10 @@ final class ThreadModel: ObservableObject {
                     // their first line; repeats are dropped.
                     if let first = lines.first, self.parkedBatchKeys.contains(first) { return }
                     if let first = lines.first { self.parkedBatchKeys.insert(first) }
+                    self.revealSettleWork?.cancel()   // stream is NOT quiet
+                    if !self.firstScreenReady, self.rawLines.count < 120 {
+                        self.mountOlderIfNeeded()     // curtain-phase backfill
+                    }
                     // LAZY history: older batches park in a buffer and the UI
                     // is not touched at all — no reparse, no list churn. They
                     // splice in only when the user actually scrolls near the
@@ -141,7 +150,7 @@ final class ThreadModel: ObservableObject {
                     self.rawLines = self.capped(lines)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                         guard let self else { return }
-                        if self.rawLines.count < 240, !self.pendingOlder.isEmpty {
+                        if !self.firstScreenReady, self.rawLines.count < 120, !self.pendingOlder.isEmpty {
                             self.mountOlderIfNeeded()
                         }
                     }
@@ -314,18 +323,43 @@ final class ThreadModel: ObservableObject {
     /// when the user scrolls near the top; reaching the top again mounts the
     /// next page (Discord-style). Small slices keep the table's height
     /// re-estimation error (and thus the anchor compensation error) tiny.
-    func mountOlderIfNeeded() {
+    /// Pull-to-load, two phases. ARM fires the moment the pull crosses the
+    /// threshold (spinner + haptic, mid-drag); the SPLICE waits for
+    /// `executePull()` — called by the list only after the finger lifts and
+    /// the rubber-band settles. Mounting mid-drag shifted the drag's own
+    /// baseline and threw the anchor off; at rest, scrollPosition holds it
+    /// exactly. Strictly user-driven — nothing chains afterwards.
+    func pullOlderHistory() {
+        guard !loadingOlder, hasMoreHistory else { return }
+        loadingOlder = true
+        Haptics.rigid()
+        // Safety: if the settle callback never comes (gesture cancelled),
+        // release the spinner.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            guard let self, self.loadingOlder else { return }
+            self.loadingOlder = false
+        }
+    }
+
+    func executePull() {
+        guard loadingOlder else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.mountOlderIfNeeded(target: 72)
+        }
+    }
+
+    func mountOlderIfNeeded(target: Int = 24) {
         guard !pendingOlder.isEmpty, !mountInFlight else { return }
         // Page cut aligns to a USER record: a user turn always starts a new
         // group, so the seam between this page and the next never merges —
         // the NEXT mount is then a pure tail insert (no boundary-group id
         // shift, no fallback to the table-reloading slow path).
-        let page = 24
+        let page = target
         var take = min(page, pendingOlder.count)
         // Extend to a user-record seam (never merges with the next page) but
         // CAP the walk — a marathon assistant turn with no user record in
         // sight once swallowed a 209-line buffer into one mega-mount.
-        let cap = min(page * 2, pendingOlder.count)
+        let cap = min(page + 48, pendingOlder.count)
         while take < cap {
             if pendingOlder[pendingOlder.count - take].contains("\"type\":\"user\"") { break }
             take += 1
@@ -334,7 +368,16 @@ final class ThreadModel: ObservableObject {
         pendingOlder.removeLast(take)
         parseGen += 1
         mountInFlight = true
-        rawLines = capped(slice + rawLines)
+        // Boundary normalization: peel any leading PARTIAL turn off the
+        // existing buffer into this splice, so the seam always lands on a
+        // user message. A seam inside an assistant turn merges groups across
+        // it — the boundary row's id changes and the scroll anchor dies
+        // (restore then falls back one row: a visible 1-row hop per pull).
+        var peeled: [String] = []
+        while let f = rawLines.first, !f.contains("\"type\":\"user\""), peeled.count < 40 {
+            peeled.append(rawLines.removeFirst())
+        }
+        rawLines = capped(slice + peeled + rawLines)
         cachedRecords = []
         decodedLineCount = 0
         // Immediate (not debounced): back-to-back mounts must land as
@@ -345,7 +388,7 @@ final class ThreadModel: ObservableObject {
         // lines) back-fills page by page WITHOUT waiting for a scroll event.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self else { return }
-            if self.rawLines.count < 240, !self.pendingOlder.isEmpty {
+            if !self.firstScreenReady, self.rawLines.count < 120, !self.pendingOlder.isEmpty {
                 self.mountOlderIfNeeded()
             }
         }
@@ -367,6 +410,20 @@ final class ThreadModel: ObservableObject {
         didSet { hasMoreHistory = !pendingOlder.isEmpty }
     }
     @Published var hasMoreHistory = false
+    /// First-screen curtain: the skeleton stays up until the newest ~1.5
+    /// screens are assembled (quota / buffer-drained / timeout, whichever
+    /// first), then the thread reveals ONCE — fully formed, pinned to the
+    /// newest message. After the reveal NOTHING mounts automatically; older
+    /// history is strictly pull-to-load (user-driven).
+    @Published var firstScreenReady = false
+    /// Pull-to-load state: overlay spinner while a history chunk assembles.
+    @Published var loadingOlder = false
+    /// Bumped every time parsed items replace the timeline — the list keys
+    /// its post-mount anchor restore off this (items.first?.id is a DEAD
+    /// signal: the leading date divider keeps the same id while re-attaching
+    /// to the new chunk).
+    @Published var mountTick = 0
+    private var revealSettleWork: DispatchWorkItem?
     private var parkedBatchKeys: Set<String> = []
     /// Bumped on every rawLines mutation; detached parse/build passes carry
     /// the generation they started from and drop their result if another
@@ -538,10 +595,42 @@ final class ThreadModel: ObservableObject {
         }
     }
 
+    private func revealFirstScreen() {
+        guard !firstScreenReady else { return }
+        firstScreenReady = true
+    }
+
+    private func evaluateFirstScreen() {
+        guard !firstScreenReady, !items.isEmpty else { return }
+        if rawLines.count >= 120 {
+            revealFirstScreen()
+        } else if pendingOlder.isEmpty {
+            // Buffer empty can mean "small session" OR "batches still in
+            // flight" — only reveal after the stream has stayed quiet.
+            let settle = DispatchWorkItem { [weak self] in
+                guard let self, !self.firstScreenReady else { return }
+                if self.pendingOlder.isEmpty { self.revealFirstScreen() }
+                else { self.evaluateFirstScreen() }
+            }
+            revealSettleWork?.cancel()
+            revealSettleWork = settle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: settle)
+        }
+    }
+
     private func applyParsed(_ timeline: ChatTimeline) {
         items = timeline.items
         revision += 1
         isLoading = false
+        loadingOlder = false
+        mountTick += 1
+        evaluateFirstScreen()
+        // Curtain-phase backfill: keep assembling pages toward the quota
+        // while the skeleton is still up (single-flight blocked mid-stream
+        // batches; chaining from here is race-free). Stops at reveal.
+        if !firstScreenReady, rawLines.count < 120, !pendingOlder.isEmpty {
+            DispatchQueue.main.async { [weak self] in self?.mountOlderIfNeeded() }
+        }
         // The real user message streamed in → drop the optimistic copy.
         if let opt = optimisticUser, lastUserText() == opt {
             optimisticUser = nil

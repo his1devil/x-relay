@@ -527,7 +527,10 @@ struct AssistantGroupView: View {
 struct ToolRunView: View {
     @Environment(\.theme) private var theme
     let calls: [ToolCall]
-    @State private var expanded = false
+    /// Details open in a bottom SHEET, not inline: the summary row's height
+    /// stays constant, so history rows are cheap and the layout never shifts
+    /// when someone opens a past tool run.
+    @State private var showDetail = false
 
     private var running: Bool { calls.contains { $0.result == nil } }
     private var current: ToolCall? { calls.last { $0.result == nil } ?? calls.last }
@@ -536,7 +539,7 @@ struct ToolRunView: View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
                 Haptics.selection()
-                withAnimation(Motion.snap) { expanded.toggle() }
+                showDetail = true
             } label: {
                 HStack(spacing: 7) {
                     if running {
@@ -560,7 +563,6 @@ struct ToolRunView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.faint)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 5)
@@ -568,14 +570,9 @@ struct ToolRunView: View {
             }
             .buttonStyle(.plain)
 
-            if expanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(calls) { call in
-                        ToolEmbedView(call: call)
-                    }
-                }
-                .transition(.opacity.combined(with: .offset(y: -8)))
-            }
+        }
+        .sheet(isPresented: $showDetail) {
+            ToolRunSheet(calls: calls, title: summary)
         }
     }
 
@@ -636,36 +633,78 @@ struct ToolRunView: View {
 struct ThinkingBlockView: View {
     @Environment(\.theme) private var theme
     let text: String
-    @State private var expanded = false
+    @State private var showDetail = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles").font(.system(size: 11))
-                    Text(expanded ? "Hide thinking" : "Thought for a moment")
-                        .font(AppFont.sans(12.5))
-                        .italic()
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .foregroundStyle(theme.muted)
+        Button {
+            showDetail = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").font(.system(size: 11))
+                Text("Thought for a moment")
+                    .font(AppFont.sans(12.5))
+                    .italic()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .foregroundStyle(theme.muted)
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showDetail) {
+            ThinkingSheet(text: text)
+        }
+    }
+}
 
-            if expanded {
+/// Bottom drawer for a collapsed tool run — every embed renders INSIDE the
+/// sheet, so timeline rows keep a constant, cheap height.
+struct ToolRunSheet: View {
+    @Environment(\.theme) private var theme
+    let calls: [ToolCall]
+    let title: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(calls) { call in
+                        ToolEmbedView(call: call)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(theme.screen)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .environment(\.theme, theme)
+    }
+}
+
+struct ThinkingSheet: View {
+    @Environment(\.theme) private var theme
+    let text: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
                 Text(text)
-                    .font(AppFont.sans(13))
+                    .font(AppFont.sans(14))
                     .foregroundStyle(theme.muted)
                     .italic()
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 10)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(theme.divider).frame(width: 2)
-                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(theme.screen)
+            .navigationTitle("Thinking")
+            .navigationBarTitleDisplayMode(.inline)
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .environment(\.theme, theme)
     }
 }
