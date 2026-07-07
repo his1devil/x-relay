@@ -22,6 +22,8 @@ final class RelayClient: ObservableObject {
     enum ConnState: Equatable { case offline, connecting, online }
     enum ThreadUpdate {
         case full([String]); case delta([String])
+        /// An older batch of the initial tail — prepend before current lines.
+        case prepend([String])
         /// `session` = the session the message ACTUALLY landed in, when the pane
         /// was running a newer conversation than the one the phone targeted.
         case sent(ok: Bool, error: String, session: String?)
@@ -204,7 +206,7 @@ final class RelayClient: ObservableObject {
     /// live. Called when the first frame flips us to `.online`.
     private func requestListAndResubscribe() {
         sendApp(["type": "list"])
-        for id in subscribed { sendApp(["type": "subscribe", "id": id]) }
+        for id in subscribed { sendApp(["type": "subscribe", "id": id, "proto": 2]) }
     }
 
     /// Bound a stalled handshake: if we haven't reached `.online` within 12s, rebuild
@@ -375,7 +377,7 @@ final class RelayClient: ObservableObject {
     func subscribe(id: String, handler: @escaping (ThreadUpdate) -> Void) {
         handlers[id] = handler
         subscribed.insert(id)
-        sendApp(["type": "subscribe", "id": id])
+        sendApp(["type": "subscribe", "id": id, "proto": 2])
     }
 
     func unsubscribe(id: String) {
@@ -513,7 +515,7 @@ final class RelayClient: ObservableObject {
 
         if t == "peer", (obj["role"] as? String) == "agent", (obj["status"] as? String) == "online" {
             sendApp(["type": "list"])
-            for id in subscribed { sendApp(["type": "subscribe", "id": id]) }
+            for id in subscribed { sendApp(["type": "subscribe", "id": id, "proto": 2]) }
             return
         }
         if t == "data", let enc = obj["enc"] as? String, let pairing {
@@ -553,7 +555,11 @@ final class RelayClient: ObservableObject {
             }
         case "thread":
             if let id = msg["id"] as? String, let lines = msg["lines"] as? [String] {
-                handlers[id]?(.full(lines))
+                if (msg["prepend"] as? Bool) == true {
+                    handlers[id]?(.prepend(lines))
+                } else {
+                    handlers[id]?(.full(lines))
+                }
             }
         case "event":
             if let id = msg["id"] as? String, let lines = msg["lines"] as? [String] {

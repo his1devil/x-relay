@@ -11,6 +11,10 @@ struct RawRecord: Decodable {
     let gitBranch: String?
     let version: String?
     let sessionId: String?
+    /// CC stamps every record with a uuid — our STABLE block-id base so ids
+    /// survive prepends (batched tails, paging). Sequential ids shifted on
+    /// prepend and collided under reparse races → exyte's duplicate-id fatal.
+    let uuid: String?
     let message: RawMessage?
 
     /// Rich tool-result metadata at the record's top level. Decoded into a

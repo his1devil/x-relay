@@ -112,6 +112,13 @@ final class ThreadModel: ObservableObject {
             relay?.subscribe(id: sessionId) { [weak self] update in
                 guard let self else { return }
                 switch update {
+                case let .prepend(lines):
+                    // Older batch of the batched tail — splice above, rebuild.
+                    guard !lines.isEmpty else { return }
+                    self.rawLines = self.capped(lines + self.rawLines)
+                    self.cachedRecords = []
+                    self.decodedLineCount = 0
+                    self.scheduleReparseRemote()
                 case let .full(lines):
                     self.rawLines = self.capped(lines)
                     self.cachedRecords = []

@@ -95,7 +95,13 @@ enum TranscriptParser {
         var openModel: String?
         var openHasThinking = false
         var counter = 0
-        func nextID(_ p: String) -> String { counter += 1; return "\(p)-\(counter)" }
+        var recBase = ""
+        var recSeq = 0
+        func nextID(_ p: String) -> String {
+            if recBase.isEmpty { counter += 1; return "\(p)-\(counter)" }
+            recSeq += 1
+            return "\(p)-\(recBase)-\(recSeq)"
+        }
 
         func flushGroup() {
             guard !openBlocks.isEmpty else { openTime = nil; openModel = nil; openHasThinking = false; return }
@@ -118,6 +124,8 @@ enum TranscriptParser {
         var contextTokens: Int?
 
         for r in records {
+            recBase = r.uuid.map { String($0.prefix(8)) } ?? ""
+            recSeq = 0
             if r.isSidechain == true { continue }   // subagent turns live under their Task embed
             let t = parseDate(r.timestamp)
             if let t { lastActivity = t }

@@ -95,7 +95,17 @@ final class ExyteThreadAdapter: ObservableObject {
         if let opt = optimistic, !opt.isEmpty {
             out.append(ExyteChat.Message(id: "cr-optimistic", user: meUser, createdAt: base.addingTimeInterval(Double(items.count))))
         }
-        messages = out
+        // Belt-and-braces: exyte hard-crashes on duplicate message ids
+        // (WrappingMessages fatalError). Stable per-record ids should make
+        // duplicates impossible; if a race still produces one, keep the
+        // LAST occurrence instead of killing the app.
+        var seen = Set<String>()
+        var deduped: [ExyteChat.Message] = []
+        for m in out.reversed() where seen.insert(m.id).inserted { deduped.append(m) }
+        if deduped.count != out.count {
+            Perf.event("adapter", "DEDUPED \(out.count - deduped.count) duplicate ids")
+        }
+        messages = deduped.reversed()
         rev += 1
         Perf.end("adapterRebuild", spid, "rows n=\(out.count)")
     }
