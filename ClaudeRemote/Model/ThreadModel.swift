@@ -113,13 +113,28 @@ final class ThreadModel: ObservableObject {
                 guard let self else { return }
                 switch update {
                 case let .prepend(lines):
-                    // Older batch of the batched tail — splice above, rebuild.
+                    // Older batches of the batched tail arrive ~80ms apart;
+                    // rebuilding per batch made the freshly-opened list lurch
+                    // once PER BATCH. Accumulate and splice ONCE after the
+                    // stream goes quiet — newest content (the .full frame)
+                    // rendered instantly, history pops in behind it in one
+                    // settle instead of six.
                     guard !lines.isEmpty else { return }
-                    self.rawLines = self.capped(lines + self.rawLines)
-                    self.cachedRecords = []
-                    self.decodedLineCount = 0
-                    self.scheduleReparseRemote()
+                    self.pendingOlder = lines + self.pendingOlder
+                    self.olderFlush?.cancel()
+                    let flush = DispatchWorkItem { [weak self] in
+                        guard let self, !self.pendingOlder.isEmpty else { return }
+                        self.rawLines = self.capped(self.pendingOlder + self.rawLines)
+                        self.pendingOlder = []
+                        self.cachedRecords = []
+                        self.decodedLineCount = 0
+                        self.scheduleReparseRemote()
+                    }
+                    self.olderFlush = flush
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: flush)
                 case let .full(lines):
+                    self.olderFlush?.cancel()
+                    self.pendingOlder = []
                     self.rawLines = self.capped(lines)
                     self.cachedRecords = []
                     self.decodedLineCount = 0
@@ -297,6 +312,8 @@ final class ThreadModel: ObservableObject {
     /// Live context footprint from the transcript (last assistant turn's prompt
     /// tokens) — drives the composer's progress ring. Claude-family only.
     @Published var contextTokens: Int?
+    private var pendingOlder: [String] = []
+    private var olderFlush: DispatchWorkItem?
 
     /// Slash commands are instant TUI actions, not conversation turns — deliver
     /// without the optimistic bubble / working indicator (failures still surface
