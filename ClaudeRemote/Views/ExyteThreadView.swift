@@ -42,7 +42,7 @@ struct ExyteThreadView: View {
                     ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
                     if session.isRemote && !model.firstScreenReady {
                         MessageSkeleton()   // curtain: up until the newest ~1.5 screens are assembled
-                            .transition(.opacity)
+                            .transaction { $0.animation = nil }   // hard cut, no fade
                     } else if model.isLoading && adapter.messages.isEmpty {
                         MessageSkeleton()
                     }

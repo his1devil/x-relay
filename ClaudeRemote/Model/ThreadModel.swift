@@ -329,21 +329,26 @@ final class ThreadModel: ObservableObject {
     /// the rubber-band settles. Mounting mid-drag shifted the drag's own
     /// baseline and threw the anchor off; at rest, scrollPosition holds it
     /// exactly. Strictly user-driven — nothing chains afterwards.
+    private var pullArmedFlag = false
+
+    /// Deep pull crossed the threshold mid-drag: just acknowledge (haptic).
+    /// The spinner appears only AFTER the rubber-band settles — the user's
+    /// requested order: release → messages return home → loading → history
+    /// appears above, current screen untouched.
     func pullOlderHistory() {
-        guard !loadingOlder, hasMoreHistory else { return }
-        loadingOlder = true
+        guard !pullArmedFlag, !loadingOlder, hasMoreHistory else { return }
+        pullArmedFlag = true
         Haptics.rigid()
-        // Safety: if the settle callback never comes (gesture cancelled),
-        // release the spinner.
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-            guard let self, self.loadingOlder else { return }
-            self.loadingOlder = false
+            self?.pullArmedFlag = false
         }
     }
 
     func executePull() {
-        guard loadingOlder else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        guard pullArmedFlag else { return }
+        pullArmedFlag = false
+        loadingOlder = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             self?.mountOlderIfNeeded(target: 72)
         }
     }

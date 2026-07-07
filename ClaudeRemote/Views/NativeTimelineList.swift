@@ -164,23 +164,24 @@ struct NativeTimelineList: View {
             .scrollPosition(id: $posID, anchor: .top)
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(TapGesture().onEnded {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                to: nil, from: nil, for: nil)
+            })
             .background(theme.screen)
             .overlay(alignment: .top) {
                 if loadingOlder || endHintVisible {
-                    HStack(spacing: 8) {
+                    Group {
                         if loadingOlder {
                             ProgressView().controlSize(.small).tint(theme.sub)
-                            Text("加载更早的消息…")
                         } else {
                             Image(systemName: "checkmark.circle")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("已经是最早的消息了")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(theme.sub)
                         }
                     }
-                    .font(AppFont.sans(12, .medium))
-                    .foregroundStyle(theme.sub)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: Circle())
                     .padding(.top, 6)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
