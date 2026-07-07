@@ -77,8 +77,11 @@ struct Theme {
         muted: Color(hex: 0x5c5e66),
         faint: Color(hex: 0x80848e),
         white: Color(hex: 0x060607),
-        border: Color(hex: 0xe3e5e8),
-        divider: Color(red: 6 / 255, green: 6 / 255, blue: 7 / 255).opacity(0.08),
+        // Light borders were nearly invisible against white cards (e3e5e8 on
+        // f2f3f5): chips, the search field and the segmented control read as
+        // borderless. Two shades darker keeps them quiet but legible.
+        border: Color(hex: 0xc8ccd2),
+        divider: Color(red: 6 / 255, green: 6 / 255, blue: 7 / 255).opacity(0.14),
         blurple: Color(hex: 0x5865f2),
         claude: Color(hex: 0xb0512f),
         green: Color(hex: 0x248046),
