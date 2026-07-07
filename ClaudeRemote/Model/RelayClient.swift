@@ -555,6 +555,8 @@ final class RelayClient: ObservableObject {
             }
         case "thread":
             if let id = msg["id"] as? String, let lines = msg["lines"] as? [String] {
+                NSLog("[halx-rx] thread id=%@ lines=%d prepend=%d",
+                      String(id.prefix(8)), lines.count, (msg["prepend"] as? Bool) == true ? 1 : 0)
                 if (msg["prepend"] as? Bool) == true {
                     handlers[id]?(.prepend(lines))
                 } else {

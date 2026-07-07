@@ -113,6 +113,11 @@ final class ThreadModel: ObservableObject {
                 guard let self else { return }
                 switch update {
                 case let .prepend(lines):
+                    // Connect races re-run the whole tail sequence — the same
+                    // older batch can arrive twice. Batches are identified by
+                    // their first line; repeats are dropped.
+                    if let first = lines.first, self.parkedBatchKeys.contains(first) { return }
+                    if let first = lines.first { self.parkedBatchKeys.insert(first) }
                     // LAZY history: older batches park in a buffer and the UI
                     // is not touched at all — no reparse, no list churn. They
                     // splice in only when the user actually scrolls near the
@@ -121,7 +126,17 @@ final class ThreadModel: ObservableObject {
                     guard !lines.isEmpty else { return }
                     self.pendingOlder = lines + self.pendingOlder
                 case let .full(lines):
+                    // Duplicate-tail guard: connect-time races double-send the
+                    // subscribe, so the SAME tail sequence arrives twice. The
+                    // second full used to be harmlessly idempotent — under the
+                    // batched protocol it wiped the buffered older pages
+                    // mid-sequence (history refused to load until reopen).
+                    if !lines.isEmpty, self.rawLines.count >= lines.count,
+                       Array(self.rawLines.suffix(lines.count)) == lines {
+                        return
+                    }
                     self.pendingOlder = []
+                    self.parkedBatchKeys = []
                     self.parseGen += 1
                     self.rawLines = self.capped(lines)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -352,6 +367,7 @@ final class ThreadModel: ObservableObject {
         didSet { hasMoreHistory = !pendingOlder.isEmpty }
     }
     @Published var hasMoreHistory = false
+    private var parkedBatchKeys: Set<String> = []
     /// Bumped on every rawLines mutation; detached parse/build passes carry
     /// the generation they started from and drop their result if another
     /// mutation landed meanwhile — without this, back-to-back mounts let an

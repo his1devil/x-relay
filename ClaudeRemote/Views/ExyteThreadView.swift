@@ -40,7 +40,6 @@ struct ExyteThreadView: View {
             } else {
                 ZStack {
                     ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
-                        .equatable()
                     if model.isLoading && adapter.messages.isEmpty {
                         MessageSkeleton()   // transcript on its way — shaped placeholder, not a blank
                     }
@@ -94,7 +93,7 @@ struct ExyteThreadView: View {
 
 // MARK: - chat pane (Equatable short-circuit)
 
-private struct ChatPane: View, Equatable {
+private struct ChatPane: View {
     let rev: Int
     let session: Session
     let theme: Theme
@@ -105,11 +104,6 @@ private struct ChatPane: View, Equatable {
     // light a badge on the scroll-to-bottom button instead of yanking the scroll.
     @State private var atBottom = true
     @State private var newBelow = false
-
-    /// Re-evaluate only when the transcript content (rev) or theme actually changed.
-    static func == (l: Self, r: Self) -> Bool {
-        l.rev == r.rev && l.session.canDrive == r.session.canDrive && l.theme.screen == r.theme.screen
-    }
 
     @State private var jumpToBottom = false
 

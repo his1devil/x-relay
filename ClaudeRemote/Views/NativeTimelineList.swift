@@ -19,6 +19,7 @@ struct NativeTimelineList: View {
 
     @State private var posID: String?
     @State private var atBottom = true
+    @State private var topSpinnerVisible = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -32,7 +33,20 @@ struct NativeTimelineList: View {
                         }
                         .padding(.vertical, 14)
                         .id("cr-top-loading")
-                        .onAppear { onReachTop() }
+                        // onAppear alone fires ONCE: after the first mount the
+                        // spinner stays resident at the top of the lazy stack
+                        // and never "appears" again — paging silently stopped
+                        // after page one. Track actual visibility instead and
+                        // CHAIN mounts while it stays on screen.
+                        .overlay {
+                            GeometryReader { g in
+                                Color.clear
+                                    .onChange(of: g.frame(in: .global).minY, initial: true) { _, y in
+                                        topSpinnerVisible = y > -40 && y < UIScreen.main.bounds.height
+                                        if topSpinnerVisible { onReachTop() }
+                                    }
+                            }
+                        }
                     }
                     ForEach(items) { item in
                         TimelineItemView(item: item, agent: agent)
@@ -56,6 +70,13 @@ struct NativeTimelineList: View {
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .background(theme.screen)
+            .onChange(of: items.first?.id) { _, _ in
+                // A page landed; if the user is still parked at the top,
+                // keep pulling until the buffer runs dry (claude-code feel).
+                if topSpinnerVisible, hasMoreHistory {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { onReachTop() }
+                }
+            }
             .onChange(of: items.last?.id) { _, newLast in
                 // Follow the stream only when parked at the bottom.
                 if atBottom, let newLast {
