@@ -517,8 +517,11 @@ struct SessionsDrawerView: View {
                 }
             }
             .padding(.horizontal, 10)
+            .padding(.vertical, 4)   // room for the drop shadow — the scroll
+                                     // view clips at its bounds and the cut
+                                     // edge read as a stray border line
         }
-        .padding(.top, 9)
+        .padding(.top, 5)
     }
 
     /// Recent (time buckets) ⇄ Projects (folder groups) — persisted. The active
@@ -544,7 +547,9 @@ struct SessionsDrawerView: View {
                     .background {
                         if on {
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(theme.card)
+                                .fill(theme.isDark ? theme.card : theme.screen)
+                                .shadow(color: .black.opacity(theme.isDark ? 0 : 0.16),
+                                        radius: 3, y: 1)
                                 .matchedGeometryEffect(id: "seg-active", in: segNS)
                         }
                     }
@@ -556,8 +561,8 @@ struct SessionsDrawerView: View {
             }
         }
         .padding(3)
-        .background(theme.codebg, in: RoundedRectangle(cornerRadius: 9))
-        .shadow(color: .black.opacity(theme.isDark ? 0 : 0.10), radius: 2.5, y: 1)
+        .background(theme.isDark ? theme.codebg : .clear,
+                    in: RoundedRectangle(cornerRadius: 9))
         .padding(.horizontal, 10)
         .padding(.bottom, 4)
     }
