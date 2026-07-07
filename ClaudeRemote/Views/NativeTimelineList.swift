@@ -68,7 +68,17 @@ struct NativeTimelineList: View {
                     Color.clear.frame(height: 1)
                         .id("cr-bottom")
                         .onAppear { atBottom = true; onAtBottomChanged(true) }
-                        .onDisappear { atBottom = false; onAtBottomChanged(false) }
+                        .onDisappear {
+                            atBottom = false
+                            onAtBottomChanged(false)
+                            // While pinned (posID nil + bottom anchor) the
+                            // sentinel CANNOT leave the viewport — so its
+                            // disappearance is, by elimination, the user's
+                            // first scroll. This replaces a full-surface
+                            // DragGesture that was stealing the navigation
+                            // edge-swipe (right-swipe back stopped working).
+                            userHasScrolled = true
+                        }
                 }
                 .frame(minHeight: geo.size.height, alignment: .bottom)   // short threads hug the composer
                 .scrollTargetLayout()
@@ -93,9 +103,7 @@ struct NativeTimelineList: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { onReachTop() }
                 }
             }
-            .simultaneousGesture(
-                DragGesture().onChanged { _ in userHasScrolled = true }
-            )
+
             .onChange(of: items.last?.id) { _, newLast in
                 // Follow the stream only when parked at the bottom.
                 if atBottom, let newLast {
