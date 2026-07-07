@@ -59,7 +59,6 @@ struct NativeTimelineList: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -157,7 +156,6 @@ struct NativeTimelineList: View {
                             userHasScrolled = true
                         }
                 }
-                .frame(minHeight: geo.size.height, alignment: .bottom)   // short threads hug the composer
                 .scrollTargetLayout()
             }
             .coordinateSpace(name: "cr-scroll")
@@ -233,7 +231,6 @@ struct NativeTimelineList: View {
                     jumpToBottom = false
                 }
             }
-        }
         }
     }
 }

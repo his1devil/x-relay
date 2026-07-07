@@ -143,10 +143,20 @@ final class RelayHub: ObservableObject {
     /// that never reproduced against mock data. Flush runs on release.
     private var uiHold = false
     private var pendingRecompute = false
+    private var holdTimeout: DispatchWorkItem?
 
     func holdUpdates(_ on: Bool) {
         uiHold = on
-        if !on, pendingRecompute {
+        // A cancelled gesture can drop the matching release — without a
+        // ceiling the hold wedges FOREVER and the session list freezes
+        // (stale "Connected" after un-sharing a pane, etc.). Animations
+        // this gate protects are sub-second; 1.5s is a safe roof.
+        holdTimeout?.cancel()
+        if on {
+            let w = DispatchWorkItem { [weak self] in self?.holdUpdates(false) }
+            holdTimeout = w
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: w)
+        } else if pendingRecompute {
             pendingRecompute = false
             recompute()
         }
