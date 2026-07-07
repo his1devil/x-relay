@@ -162,6 +162,11 @@ struct NativeTimelineList: View {
             .scrollPosition(id: $posID, anchor: .top)
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo("cr-bottom", anchor: .bottom)
+                }
+            }
             .simultaneousGesture(TapGesture().onEnded {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                                 to: nil, from: nil, for: nil)
@@ -204,6 +209,11 @@ struct NativeTimelineList: View {
                 // first drag, posID takes over and prepends hold position.
                 if !userHasScrolled {
                     posID = nil
+                    // defaultScrollAnchor(.bottom) can overshoot into empty
+                    // space under lazy estimation (viewport past the real
+                    // content after the hug-frame removal) — land explicitly.
+                    proxy.scrollTo("cr-bottom", anchor: .bottom)
+                    DispatchQueue.main.async { proxy.scrollTo("cr-bottom", anchor: .bottom) }
                 }
             }
 

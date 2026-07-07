@@ -298,7 +298,7 @@ struct UserMessageView: View {
         // Discord/Claude-Code author layout: avatar + nickname + time (time to
         // the RIGHT of the name), then the message body beneath — the user's
         // identity shows on every message, never elided.
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
                 UserAvatar(size: 34)
                 Text(profile.nickname)
@@ -318,8 +318,8 @@ struct UserMessageView: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 18)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, 5)
+        .padding(.bottom, 2)
         .sheet(item: $zoomed) { z in
             ImageZoomSheet(image: z.image)
                 .environment(\.theme, theme)
@@ -414,7 +414,7 @@ struct AssistantGroupView: View {
     var agent: AgentKind = .claude
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
                 AgentTile(kind: agent, size: 34)
                 Text(agent.displayName)

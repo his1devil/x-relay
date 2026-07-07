@@ -8,7 +8,7 @@ import SwiftUI
 struct RichText: View {
     let text: String
     var color: Color
-    var size: CGFloat = 16.5
+    var size: CGFloat = 15.5
     /// Hug content width instead of greedily filling the container — used inside
     /// the user bubble so short messages get a small bubble.
     var hugging: Bool = false
