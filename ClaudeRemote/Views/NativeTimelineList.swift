@@ -20,8 +20,14 @@ struct NativeTimelineList: View {
     @State private var posID: String?
     @State private var atBottom = true
     @State private var topSpinnerVisible = false
+    /// Until the user drags, the viewport is PINNED to the newest message:
+    /// opening lands at the bottom and back-filled history grows silently
+    /// above. First drag hands control to the user (spinner paging takes
+    /// over at the top).
+    @State private var userHasScrolled = false
 
     var body: some View {
+        GeometryReader { geo in
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -64,6 +70,7 @@ struct NativeTimelineList: View {
                         .onAppear { atBottom = true; onAtBottomChanged(true) }
                         .onDisappear { atBottom = false; onAtBottomChanged(false) }
                 }
+                .frame(minHeight: geo.size.height, alignment: .bottom)   // short threads hug the composer
                 .scrollTargetLayout()
             }
             .scrollPosition(id: $posID, anchor: .top)
@@ -71,12 +78,24 @@ struct NativeTimelineList: View {
             .scrollDismissesKeyboard(.interactively)
             .background(theme.screen)
             .onChange(of: items.first?.id) { _, _ in
-                // A page landed; if the user is still parked at the top,
-                // keep pulling until the buffer runs dry (claude-code feel).
-                if topSpinnerVisible, hasMoreHistory {
+                // History page landed. Before the user's first drag, CLEAR
+                // the position anchor so defaultScrollAnchor(.bottom) keeps
+                // the viewport glued to the newest message (scrollTo is a
+                // no-op for lazily-unrealized rows; scrollPosition would
+                // "helpfully" pin us to the OLD content instead). After the
+                // first drag, posID takes over and prepends hold position.
+                if !userHasScrolled {
+                    posID = nil
+                }
+                // Parked at the top spinner → chain the next page until the
+                // buffer runs dry (claude-code feel).
+                if userHasScrolled, topSpinnerVisible, hasMoreHistory {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { onReachTop() }
                 }
             }
+            .simultaneousGesture(
+                DragGesture().onChanged { _ in userHasScrolled = true }
+            )
             .onChange(of: items.last?.id) { _, newLast in
                 // Follow the stream only when parked at the bottom.
                 if atBottom, let newLast {
@@ -101,6 +120,7 @@ struct NativeTimelineList: View {
                     jumpToBottom = false
                 }
             }
+        }
         }
     }
 }

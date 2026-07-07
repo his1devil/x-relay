@@ -97,8 +97,11 @@ private struct ChatPane: View {
     let rev: Int
     let session: Session
     let theme: Theme
-    let model: ThreadModel
-    let adapter: ExyteThreadAdapter
+    // OBSERVED, not let: hasMoreHistory/items land outside adapter.rev bumps
+    // (a prepend parks in the buffer with NO reparse) — a plain `let` never
+    // re-evaluated this pane, so the paging spinner could never appear.
+    @ObservedObject var model: ThreadModel
+    @ObservedObject var adapter: ExyteThreadAdapter
 
     // Streaming-follow: when new content lands while the reader is up in history,
     // light a badge on the scroll-to-bottom button instead of yanking the scroll.
