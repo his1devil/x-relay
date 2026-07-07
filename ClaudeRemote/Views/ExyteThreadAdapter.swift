@@ -16,6 +16,10 @@ import ExyteChat
 @MainActor
 final class ExyteThreadAdapter: ObservableObject {
     @Published private(set) var messages: [ExyteChat.Message] = []
+    private static let epoch = Date(timeIntervalSince1970: 1_600_000_000)
+    private var assignedAt: [String: TimeInterval] = [:]
+    private var minAssigned: TimeInterval = 0
+    private var maxAssigned: TimeInterval = 0
     @Published private(set) var rev = 0
     /// Row content by id — @Published so on-screen cells re-render in place.
     @Published private(set) var itemsById: [String: TimelineItem] = [:]
@@ -84,16 +88,34 @@ final class ExyteThreadAdapter: ObservableObject {
         didInitialLoad = true
         lastIds = ids
 
-        // createdAt is synthesized monotonically from display order — the transcript
-        // is already ordered, and real record times are unreliable/absent.
-        let base = Date(timeIntervalSince1970: 1_600_000_000)
+        // createdAt orders exyte's list (real record times are unreliable), but
+        // it must be STABLE per id: synthesizing from display index meant any
+        // prepend shifted every row's index → createdAt → exyte saw "every row
+        // changed" and re-rendered the whole table. Assign each id a time ONCE
+        // and reuse it forever; history ids grow downward from the earliest,
+        // new ids upward from the latest — either side grows with ZERO churn
+        // to already-rendered rows.
         var out: [ExyteChat.Message] = []
         out.reserveCapacity(items.count + 1)
+        let firstSeenIdx = items.firstIndex { assignedAt[$0.id] != nil }
         for (i, item) in items.enumerated() {
-            out.append(ExyteChat.Message(id: item.id, user: user(for: item), createdAt: base.addingTimeInterval(Double(i))))
+            let t: TimeInterval
+            if let cached = assignedAt[item.id] {
+                t = cached
+            } else if let f = firstSeenIdx, i < f {
+                t = minAssigned - Double(f - i)          // prepended history
+            } else {
+                maxAssigned += 1; t = maxAssigned        // appended (or first load)
+            }
+            assignedAt[item.id] = t
+            minAssigned = min(minAssigned, t)
+            out.append(ExyteChat.Message(id: item.id, user: user(for: item),
+                                         createdAt: Self.epoch.addingTimeInterval(t)))
         }
         if let opt = optimistic, !opt.isEmpty {
-            out.append(ExyteChat.Message(id: "cr-optimistic", user: meUser, createdAt: base.addingTimeInterval(Double(items.count))))
+            // Always strictly newest — never cached, so appends can't pass it.
+            out.append(ExyteChat.Message(id: "cr-optimistic", user: meUser,
+                                         createdAt: Self.epoch.addingTimeInterval(maxAssigned + 1)))
         }
         // Belt-and-braces: exyte hard-crashes on duplicate message ids
         // (WrappingMessages fatalError). Stable per-record ids should make

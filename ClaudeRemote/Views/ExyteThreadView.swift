@@ -126,6 +126,9 @@ private struct ChatPane: View, Equatable {
         .setAvailableInputs([.text])
         .keyboardDismissMode(.interactive)
         .showScrollToBottomButton(true)
+        .enableLoadMore(offset: 3) { [weak model] in
+            Task { @MainActor in model?.mountOlderIfNeeded() }
+        }
         .onScrolledToBottomChanged { bottom in
             atBottom = bottom
             if bottom { newBelow = false }
