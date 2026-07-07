@@ -618,6 +618,8 @@ final class RelayClient: ObservableObject {
             model: (dict["model"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             canDrive: (dict["canDrive"] as? Bool) ?? true,
             agentAlive: (dict["agentAlive"] as? Bool) ?? true,
+            defaultModel: dict["defaultModel"] as? String,
+            defaultEffort: dict["defaultEffort"] as? String,
             cwdLive: (dict["cwdLive"] as? Bool) ?? false
         )
     }

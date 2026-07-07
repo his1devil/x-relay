@@ -131,14 +131,31 @@ struct SessionsDrawerView: View {
         }
     }
 
-    /// Distinct hosts present in the current data (skips the placeholder "remote").
-    private var presentHosts: [String] {
-        Array(Set(displayed.map { $0.host })).filter { !$0.isEmpty && $0 != "remote" }.sorted()
+    /// Paired Macs are PERSISTENT entities: a host you've connected to stays
+    /// on the rail after a disconnect — with its state — instead of vanishing
+    /// the moment its sessions drop out of the list.
+    enum HostState { case online, connecting, offline, paused }
+    struct RailHost: Identifiable {
+        let id: String       // room id
+        let name: String     // last-known hostname (Device.label)
+        let state: HostState
+        let sessions: Int
     }
-
-    /// A host is "connected" if any of its sessions is owned by an online relay client.
-    private func hostOnline(_ h: String) -> Bool {
-        displayed.contains { $0.host == h && (relay.client(for: $0)?.isOnline ?? false) }
+    private var railHosts: [RailHost] {
+        relay.devices.map { d in
+            let name = d.label.isEmpty ? String(d.id.prefix(6)) : d.label
+            let state: HostState
+            if !d.enabled { state = .paused }
+            else if let c = d.client {
+                switch c.state {
+                case .online: state = .online
+                case .connecting: state = .connecting
+                case .offline: state = .offline
+                }
+            } else { state = .paused }
+            return RailHost(id: d.id, name: name, state: state,
+                            sessions: displayed.filter { $0.host == name }.count)
+        }
     }
 
     /// Final list = agent rail scope ∩ chip filter ∩ search terms.
@@ -185,8 +202,11 @@ struct SessionsDrawerView: View {
     var body: some View {
         // Rail overlays the full-bleed panel (Discord-style). All per-frame motion
         // lives in DrawerShell — panel/rail are built ONCE here and reused.
-        DrawerShell(railVisible: $railVisible, railWidth: railWidth, parallax: 24,
-                    box: dragBox, panel: panel, rail: rail)
+        // parallax 0: the panel stays PUT while the rail slides over it —
+        // the 24pt push-aside read as unwanted movement, not depth.
+        DrawerShell(railVisible: $railVisible, railWidth: railWidth, parallax: 0,
+                    box: dragBox, onMotion: { relay.holdUpdates($0) },
+                    panel: panel, rail: rail)
         .background(theme.codebg.ignoresSafeArea())
         .navigationBarHidden(true)
         .navigationDestination(for: Session.self) { s in
@@ -250,16 +270,15 @@ struct SessionsDrawerView: View {
                         }
                     }
 
-                    if presentHosts.count >= 2 {
+                    if !railHosts.isEmpty {
                         railSectionLabel("HOSTS")
-                        ForEach(presentHosts, id: \.self) { h in
-                            let on = railScope == .host(h)
-                            let n = displayed.filter { $0.host == h }.count
-                            railSlot(title: h, subtitle: "\(n) session\(n == 1 ? "" : "s")",
+                        ForEach(railHosts) { h in
+                            let on = railScope == .host(h.name)
+                            railSlot(title: h.name, subtitle: hostSubtitle(h),
                                      active: on, indicator: on ? .full : .stub) {
-                                railScope = .host(h)
+                                railScope = .host(h.name)
                             } content: {
-                                hostTile(online: hostOnline(h))
+                                hostTile(state: h.state)
                             }
                         }
                     }
@@ -290,15 +309,31 @@ struct SessionsDrawerView: View {
     }
 
     /// A paired-Mac tile: neutral machine glyph with a live/offline status dot.
-    private func hostTile(online: Bool) -> some View {
-        tileBox(bg: theme.card) {
+    private func hostSubtitle(_ h: RailHost) -> String {
+        switch h.state {
+        case .online: return "\(h.sessions) session\(h.sessions == 1 ? "" : "s")"
+        case .connecting: return "connecting…"
+        case .offline: return "offline"
+        case .paused: return "paused"
+        }
+    }
+
+    private func hostTile(state: HostState) -> some View {
+        let dot: Color
+        switch state {
+        case .online: dot = theme.greenText
+        case .connecting: dot = theme.gold
+        case .offline: dot = theme.red.opacity(0.85)
+        case .paused: dot = theme.faint
+        }
+        return tileBox(bg: theme.card) {
             Image(systemName: "desktopcomputer")
                 .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(online ? theme.greenText : theme.sub)
+                .foregroundStyle(state == .online ? theme.greenText : theme.sub)
         }
         .overlay(alignment: .bottomTrailing) {
             Circle()
-                .fill(online ? theme.greenText : theme.faint)
+                .fill(dot)
                 .frame(width: 10, height: 10)
                 .overlay(Circle().stroke(theme.codebg, lineWidth: 2))
                 .offset(x: 2, y: 2)
@@ -386,7 +421,9 @@ struct SessionsDrawerView: View {
             let agents = Set(scoped.map { $0.agent }).count
             return "\(agents) agent\(agents == 1 ? "" : "s") · \(n) session\(plural)"
         case .host:
-            return hostOnline(headerTitle) ? "Connected · \(n) session\(plural)" : "\(n) session\(plural)"
+            let st = railHosts.first { $0.name == headerTitle }?.state
+            return st == .online ? "Connected · \(n) session\(plural)"
+                 : st == .offline ? "Offline · last known sessions" : "\(n) session\(plural)"
         case .agent:
             let hosts = Set(scoped.map { $0.host })
             if hosts.count > 1 { return "\(hosts.count) hosts · \(n) session\(plural)" }
@@ -591,6 +628,7 @@ struct SessionsDrawerView: View {
             // Direction-locked rail swipe (UIKit require-to-fail): the drag STREAMS
             // into railProgress so the drawer follows the finger; release settles.
             .background(HorizontalSwipeCatcher(
+                onBegin: { dragBox.begin() },
                 onTrack: { dragBox.track($0) },
                 onRelease: { dragBox.release($0, $1) }
             ))

@@ -8,7 +8,9 @@ enum Motion {
     /// Press feedback, toggles, chips — quick with a whisper of bounce.
     static let snap = Animation.spring(response: 0.32, dampingFraction: 0.85)
     /// The drawer/rail — heavier surface, settles with authority.
-    static let drawer = Animation.spring(response: 0.38, dampingFraction: 0.88)
+    /// Discord-feel drawer: FAST launch with a soft landing — snappy overall
+    /// (~0.26s) with a whisper of overshoot so it reads as velocity, not lag.
+    static let drawer = Animation.spring(response: 0.26, dampingFraction: 0.82)
     /// Elements popping into existence (badges, bubbles, banners).
     static let pop = Animation.spring(response: 0.30, dampingFraction: 0.78)
     /// 渐进渐变 — the default crossfade for content/state swaps.

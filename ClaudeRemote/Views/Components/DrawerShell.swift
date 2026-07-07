@@ -4,6 +4,7 @@ import SwiftUI
 /// drawer body observe per-frame state. The drawer wires its catcher to call
 /// these; the shell installs the implementations on appear.
 final class RailDragBox {
+    var begin: () -> Void = {}
     var track: (CGFloat) -> Void = { _ in }
     var release: (CGFloat, CGFloat) -> Void = { _, _ in }
 }
@@ -18,6 +19,10 @@ struct DrawerShell<Panel: View, Rail: View>: View {
     let railWidth: CGFloat
     let parallax: CGFloat
     let box: RailDragBox
+    /// Called with true at drag/animation start, false after settle — the
+    /// drawer wires this to RelayHub.holdUpdates to keep pushes out of the
+    /// animation window.
+    var onMotion: ((Bool) -> Void)? = nil
     let panel: Panel
     let rail: Rail
 
@@ -26,6 +31,11 @@ struct DrawerShell<Panel: View, Rail: View>: View {
     var body: some View {
         ZStack(alignment: .leading) {
             panel
+                // Flatten the (heavy) panel into ONE composited layer so the
+                // open/close animation moves a texture, not a live tree —
+                // the rail animation stuttered while dozens of session rows
+                // re-composited every frame.
+                .compositingGroup()
                 .offset(x: parallax * progress)
             Color.black
                 .opacity(0.38 * progress)
@@ -46,14 +56,32 @@ struct DrawerShell<Panel: View, Rail: View>: View {
                 )
                 .allowsHitTesting(progress > 0.02)
             rail
+                .compositingGroup()
                 .offset(x: -railWidth * (1 - progress))
                 .zIndex(1)
                 .allowsHitTesting(progress > 0.6)
         }
         .onAppear {
+            box.begin = {
+                guard !railVisible else { return }
+                // Pre-warm: hold pushes AND nudge the composited layers into
+                // existence a few ms before the first .changed — the panel's
+                // first-rasterization spike used to land exactly on the first
+                // visible frame of a finger drag (buttons never showed it
+                // because the spring's slow start hid the same spike).
+                onMotion?(true)
+                if progress == 0 { progress = 0.001 }
+            }
             box.track = { dx in
                 guard !railVisible else { return }
-                progress = clamp(dx / railWidth)
+                let target = clamp(dx / railWidth)
+                if progress <= 0.002 {
+                    // First real frame arrives pre-loaded with the recognizer's
+                    // ~15pt threshold — melt the jump instead of teleporting.
+                    withAnimation(.easeOut(duration: 0.06)) { progress = target }
+                } else {
+                    progress = target
+                }
             }
             box.release = { _, vel in
                 guard !railVisible else { return }
@@ -75,12 +103,18 @@ struct DrawerShell<Panel: View, Rail: View>: View {
 
     private func setRail(open: Bool) {
         railVisible = open
+        onMotion?(true)
         withAnimation(Motion.drawer) { progress = open ? 1 : 0 }
+        // Release after the spring lands (0.26s response ⇒ ~0.4s tail).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { onMotion?(false) }
     }
 
     /// Finger up: project velocity to pick a side (fast flicks win over position).
     private func settle(velocity: CGFloat) {
-        let projected = progress + velocity / railWidth * 0.12
+        // 0.18: a decisive flick commits earlier — the settle starts from a
+        // higher projected progress, so the spring covers less distance and
+        // the drawer feels immediate (Discord-like).
+        let projected = progress + velocity / railWidth * 0.18
         setRail(open: projected > 0.5)
     }
 }

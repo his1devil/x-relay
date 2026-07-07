@@ -137,6 +137,25 @@ final class RelayHub: ObservableObject {
 
     // MARK: merged surface
 
+    /// While the drawer is mid-drag / mid-settle, list recomputes are DEFERRED:
+    /// a sessions push landing during the animation rebuilt the (composited)
+    /// panel texture and dropped frames — the "rail stutter" on real devices
+    /// that never reproduced against mock data. Flush runs on release.
+    private var uiHold = false
+    private var pendingRecompute = false
+
+    func holdUpdates(_ on: Bool) {
+        uiHold = on
+        if !on, pendingRecompute {
+            pendingRecompute = false
+            recompute()
+        }
+    }
+
+    private func gatedRecompute() {
+        if uiHold { pendingRecompute = true } else { recompute() }
+    }
+
     private func observe(_ client: RelayClient, room: String) {
         // @Published emits on WILLSET — recompute() reads `client.sessions` etc.,
         // which at emission time still hold the OLD value. Hop one runloop tick so
@@ -145,7 +164,7 @@ final class RelayHub: ObservableObject {
         var bag = Set<AnyCancellable>()
         client.$sessions
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.recompute() }
+            .sink { [weak self] _ in self?.gatedRecompute() }
             .store(in: &bag)
         client.$state
             .receive(on: DispatchQueue.main)

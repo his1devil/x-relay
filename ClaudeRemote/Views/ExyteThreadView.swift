@@ -117,7 +117,7 @@ private struct ChatPane: View, Equatable {
             guard session.isRemote, session.canDrive, !t.isEmpty else { return }
             model?.send(t)
         } messageBuilder: { params in
-            MessageCell(params: params, adapter: adapter, model: model, theme: theme)
+            MessageCell(params: params, adapter: adapter, model: model, theme: theme, session: session)
         } inputViewBuilder: { params in
             Composer(params: params, session: session, theme: theme, model: model)
         }
@@ -148,6 +148,7 @@ private struct MessageCell: View {
     @ObservedObject var adapter: ExyteThreadAdapter   // content channel: redraw in place
     @ObservedObject var model: ThreadModel            // optimistic echo + upload thumbs
     let theme: Theme
+    var session: Session
 
     var body: some View {
         let _ = Perf.event("cellHost", params.message.id)
@@ -171,7 +172,7 @@ private struct MessageCell: View {
                 }
                 .opacity(0.6)
             } else if let item = adapter.itemsById[params.message.id] {
-                TimelineItemView(item: item)
+                TimelineItemView(item: item, agent: session.agent)
             } else {
                 EmptyView()
             }
@@ -335,11 +336,34 @@ private struct Composer: View {
 
     private var contextPercent: Int? {
         guard supportsModelSwitch, let t = model.contextTokens, t > 0 else { return nil }
-        return min(99, Int((Double(t) / 200_000) * 100))
+        return min(99, Int((Double(t) / contextWindow) * 100))
+    }
+
+    /// Context window by model id: 1M-beta models carry a "[1m]" suffix;
+    /// everything else in the Claude family is 200k today.
+    private var contextWindow: Double {
+        let id = (model.liveSession ?? session).model ?? ""
+        return id.contains("[1m]") || id.contains("-1m") ? 1_000_000 : 200_000
     }
 
     private var effortChipLabel: String {
-        model.chosenEffort ?? "effort"
+        model.chosenEffort ?? live.defaultEffort ?? "effort"
+    }
+
+    /// The session's ACTUAL current model id: transcript truth first, then the
+    /// Claude global default from settings.json.
+    private var liveModelId: String {
+        (live.model?.isEmpty == false ? live.model : nil) ?? live.defaultModel ?? ""
+    }
+
+    /// Map a model id ("claude-fable-5[1m]") to the short `/model` arg.
+    static func modelArg(from id: String) -> String? {
+        let l = id.lowercased()
+        if l.contains("fable") { return "fable" }
+        if l.contains("opus") { return "opus" }
+        if l.contains("sonnet") { return "sonnet" }
+        if l.contains("haiku") { return "haiku" }
+        return nil
     }
 
     private var modelChipLabel: String {
@@ -354,9 +378,14 @@ private struct Composer: View {
     }
 
     private var currentModelLabel: String {
-        if let id = session.model, !id.isEmpty {
-            return AssistantGroupView.modelLabel(id)
+        // Same fallback chain as the sheet preselection: transcript model →
+        // Claude global default → generic label. The chip used to show a bare
+        // "Model" whenever the transcript hadn't named one yet.
+        if let arg = Self.modelArg(from: liveModelId),
+           let opt = ModelPickerSheet.models.first(where: { $0.arg == arg }) {
+            return opt.name
         }
+        if !liveModelId.isEmpty { return AssistantGroupView.modelLabel(liveModelId) }
         return "Model"
     }
 
@@ -422,9 +451,11 @@ private struct Composer: View {
                             Haptics.selection(); showEffortSheet = true
                         }
                     } else {
-                        // Unsupported agent (e.g. Codex today): show the default,
-                        // non-interactive.
-                        selectorChip(icon: "cpu", label: currentModelLabel, action: nil)
+                        // Unsupported agent (e.g. Codex today): show ITS model
+                        // (from its own transcript), never Claude's defaults.
+                        selectorChip(icon: "cpu",
+                                     label: (live.model?.isEmpty == false ? live.model! : session.agent.displayName),
+                                     action: nil)
                             .opacity(0.55)
                     }
                     if let pct = contextPercent {
@@ -472,7 +503,7 @@ private struct Composer: View {
         .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 6, matching: .images)
         .sheet(isPresented: $showModelSheet) {
             ModelPickerSheet(mode: .model, currentModelLabel: currentModelLabel,
-                             initialSelection: model.chosenModel) { arg in
+                             initialSelection: model.chosenModel ?? Self.modelArg(from: liveModelId)) { arg in
                 model.sendCommand("/model \(arg)")
                 model.chosenModel = arg
             }
@@ -480,7 +511,7 @@ private struct Composer: View {
         }
         .sheet(isPresented: $showEffortSheet) {
             ModelPickerSheet(mode: .effort, currentModelLabel: currentModelLabel,
-                             initialSelection: model.chosenEffort) { arg in
+                             initialSelection: model.chosenEffort ?? live.defaultEffort) { arg in
                 model.sendCommand("/effort \(arg)")
                 model.chosenEffort = arg
             }

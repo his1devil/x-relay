@@ -48,6 +48,9 @@ struct Session: Identifiable, Hashable {
     /// The pane's agent process is actually running (vs. the pane sitting at a
     /// bare shell after the agent exited). Old vibTTY doesn't send it → true.
     var agentAlive: Bool = true
+    /// Claude-side global defaults (settings.json) — preselect pickers.
+    var defaultModel: String? = nil
+    var defaultEffort: String? = nil
 
     /// The session's project dir HAS a live vibTTY pane, but this specific session
     /// isn't the one loaded in it (an older session in the same directory). Lets the

@@ -15,23 +15,27 @@ import UIKit
 /// Streams the drag (`onTrack`) and finger-up (`onRelease` with velocity) so the
 /// drawer can FOLLOW the finger instead of toggling.
 struct HorizontalSwipeCatcher: UIViewRepresentable {
+    var onBegin: (() -> Void)? = nil                     // pan recognized, before first .changed
     var onTrack: ((CGFloat) -> Void)? = nil              // live translation.x while dragging
     var onRelease: ((CGFloat, CGFloat) -> Void)? = nil   // (translation.x, velocity.x) at finger-up
 
     func makeUIView(context: Context) -> CatcherView {
         let v = CatcherView()
         v.isUserInteractionEnabled = false   // never eats touches itself
+        v.onBegin = onBegin
         v.onTrack = onTrack
         v.onRelease = onRelease
         return v
     }
 
     func updateUIView(_ v: CatcherView, context: Context) {
+        v.onBegin = onBegin
         v.onTrack = onTrack
         v.onRelease = onRelease
     }
 
     final class CatcherView: UIView, UIGestureRecognizerDelegate {
+        var onBegin: (() -> Void)?
         var onTrack: ((CGFloat) -> Void)?
         var onRelease: ((CGFloat, CGFloat) -> Void)?
         private var installed = false
@@ -73,6 +77,8 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
         @objc private func handle(_ g: UIPanGestureRecognizer) {
             let t = g.translation(in: g.view).x
             switch g.state {
+            case .began:
+                onBegin?()
             case .changed:
                 onTrack?(t)
             case .ended, .cancelled, .failed:

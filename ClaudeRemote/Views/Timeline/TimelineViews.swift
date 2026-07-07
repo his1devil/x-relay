@@ -4,6 +4,9 @@ import SwiftUI
 /// row lines up on the 16pt channel gutter.
 struct TimelineItemView: View {
     let item: TimelineItem
+    /// Which agent authored the assistant turns — drives avatar/name/tint
+    /// (a Codex session must not wear Claude's face).
+    var agent: AgentKind = .claude
 
     var body: some View {
         switch item {
@@ -14,7 +17,7 @@ struct TimelineItemView: View {
         case let .user(message):
             UserMessageView(message: message)
         case let .assistant(group):
-            AssistantGroupView(group: group)
+            AssistantGroupView(group: group, agent: agent)
         }
     }
 }
@@ -295,9 +298,9 @@ struct UserMessageView: View {
         // Discord/Claude-Code author layout: avatar + nickname + time (time to
         // the RIGHT of the name), then the message body beneath — the user's
         // identity shows on every message, never elided.
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                UserAvatar(size: 24)
+                UserAvatar(size: 34)
                 Text(profile.nickname)
                     .font(AppFont.sans(15, .bold))
                     .foregroundStyle(theme.white)
@@ -308,12 +311,15 @@ struct UserMessageView: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
             }
+            .padding(.bottom, 1)
             bubble
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 42)
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 12)
+        .padding(.trailing, 18)
         .padding(.top, 8)
-        .padding(.bottom, 2)
+        .padding(.bottom, 4)
         .sheet(item: $zoomed) { z in
             ImageZoomSheet(image: z.image)
                 .environment(\.theme, theme)
@@ -405,14 +411,15 @@ struct UserMessageView: View {
 struct AssistantGroupView: View {
     @Environment(\.theme) private var theme
     let group: AssistantGroup
+    var agent: AgentKind = .claude
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                ClaudeAvatar(size: 24)
-                Text("Claude Code")
+            HStack(spacing: 8) {
+                AgentTile(kind: agent, size: 34)
+                Text(agent.displayName)
                     .font(AppFont.sans(15, .bold))
-                    .foregroundStyle(theme.claude)
+                    .foregroundStyle(agent == .claude ? theme.claude : agent.tile)
                     .fixedSize()
                 AppBadge()
                 if let model = group.model {
@@ -421,36 +428,43 @@ struct AssistantGroupView: View {
                 if group.hasThinking {
                     OrangeTag(text: "thinking")
                 }
-                Spacer(minLength: 4)
+                // Discord-style: the stamp rides just RIGHT of the name/tags,
+                // mirroring the user header — not pinned to the far edge.
                 Text(TimeFormat.messageStamp(group.time))
                     .font(AppFont.sans(11))
                     .foregroundStyle(theme.faint)
                     .lineLimit(1)
-                    .layoutPriority(-1)   // yield/truncate before the name+tags overflow
+                Spacer(minLength: 4)
             }
             .padding(.bottom, 1)
 
-            ForEach(Self.segments(group.blocks)) { seg in
-                switch seg {
-                case let .block(block):
-                    switch block {
-                    case let .text(_, text):
-                        if text.count > 5000 {
-                            CollapsedMarkdown(text: text)
-                        } else {
-                            RichText(text: text, color: theme.ink)
+            // Discord grid: content indents to the NAME column (avatar 34 +
+            // 8 gap), right edge untouched.
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Self.segments(group.blocks)) { seg in
+                    switch seg {
+                    case let .block(block):
+                        switch block {
+                        case let .text(_, text):
+                            if text.count > 5000 {
+                                CollapsedMarkdown(text: text)
+                            } else {
+                                RichText(text: text, color: theme.ink)
+                            }
+                        case let .thinking(_, text):
+                            ThinkingBlockView(text: text)
+                        case let .tool(call):
+                            ToolEmbedView(call: call)   // interactive kinds stay inline
                         }
-                    case let .thinking(_, text):
-                        ThinkingBlockView(text: text)
-                    case let .tool(call):
-                        ToolEmbedView(call: call)   // interactive kinds stay inline
+                    case let .toolRun(calls):
+                        ToolRunView(calls: calls)
                     }
-                case let .toolRun(calls):
-                    ToolRunView(calls: calls)
                 }
             }
+            .padding(.leading, 42)
         }
-        .padding(.horizontal, 18)
+        .padding(.leading, 12)
+        .padding(.trailing, 18)
         .padding(.top, 8)
         .padding(.bottom, 4)
     }
