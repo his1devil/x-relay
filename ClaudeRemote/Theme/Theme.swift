@@ -80,8 +80,11 @@ struct Theme {
         // Light borders were nearly invisible against white cards (e3e5e8 on
         // f2f3f5): chips, the search field and the segmented control read as
         // borderless. Two shades darker keeps them quiet but legible.
-        border: Color(hex: 0xc8ccd2),
-        divider: Color(red: 6 / 255, green: 6 / 255, blue: 7 / 255).opacity(0.14),
+        // Discord light uses decisively visible hairlines (their #d7d9dc on
+        // white reads darker because controls sit on grey wells too) — go a
+        // full step darker so chips/search/segment outlines are unmissable.
+        border: Color(hex: 0xaeb4bc),
+        divider: Color(red: 6 / 255, green: 6 / 255, blue: 7 / 255).opacity(0.20),
         blurple: Color(hex: 0x5865f2),
         claude: Color(hex: 0xb0512f),
         green: Color(hex: 0x248046),
