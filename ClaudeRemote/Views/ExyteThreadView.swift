@@ -51,6 +51,7 @@ struct ExyteThreadView: View {
         .navigationBarHidden(true)
         .onChange(of: terminalMode) { _, on in model.setTerminalMirror(on) }
         .onAppear {
+            adapter.configureTwin(theme: theme, agent: session.agent)
             model.start()
             UserDefaults.standard.set(session.id, forKey: "cr.lastSessionId")   // drawer highlights it
         }
@@ -110,43 +111,49 @@ private struct ChatPane: View, Equatable {
         l.rev == r.rev && l.session.canDrive == r.session.canDrive && l.theme.screen == r.theme.screen
     }
 
+    @State private var jumpToBottom = false
+
     var body: some View {
-        let _ = Perf.event("chatPaneBody", "rev=\(rev) n=\(adapter.messages.count)")
-        ChatView(messages: adapter.messages, chatType: .conversation) { [weak model] draft in
-            let t = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard session.isRemote, session.canDrive, !t.isEmpty else { return }
-            model?.send(t)
-        } messageBuilder: { params in
-            MessageCell(params: params, adapter: adapter, model: model, theme: theme, session: session)
-        } inputViewBuilder: { params in
-            Composer(params: params, session: session, theme: theme, model: model)
-        }
-        .showDateHeaders(false)
-        .showMessageMenuOnLongPress(false)
-        .setAvailableInputs([.text])
-        .keyboardDismissMode(.interactive)
-        .showScrollToBottomButton(true)
-        // pixels trigger: checked on EVERY scroll frame (and trivially true
-        // when content is shorter than the viewport, so a thin first frame
-        // auto-back-fills to a full screen). The cellIndex/willDisplay
-        // trigger never fired when the oldest row was already on screen at
-        // initial layout (updateInProgress swallowed it) — lazy mounts
-        // silently never started.
-        .enableLoadMoreOlderMessages(
-            triggerType: .pixels(1400),
-            handleClosure: { [weak model] in
-                await MainActor.run { model?.mountOlderIfNeeded() }
+        let _ = Perf.event("chatPaneBody", "rev=\(rev) n=\(model.items.count)")
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                NativeTimelineList(
+                    items: model.items,
+                    agent: session.agent,
+                    theme: theme,
+                    optimisticText: model.optimisticUser,
+                    hasMoreHistory: model.hasMoreHistory,
+                    onReachTop: { [weak model] in model?.mountOlderIfNeeded() },
+                    onAtBottomChanged: { b in
+                        atBottom = b
+                        if b { newBelow = false }
+                    },
+                    jumpToBottom: $jumpToBottom
+                )
+                if !atBottom {
+                    Button {
+                        jumpToBottom = true
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.ink)
+                            .frame(width: 40, height: 40)
+                            .background(theme.input, in: Circle())
+                            .overlay(alignment: .topTrailing) {
+                                if newBelow {
+                                    Circle().fill(theme.blurple).frame(width: 9, height: 9).offset(x: -2, y: 2)
+                                }
+                            }
+                    }
+                    .padding(.trailing, 14)
+                    .padding(.bottom, 10)
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
-        )
-        .onScrolledToBottomChanged { bottom in
-            atBottom = bottom
-            if bottom { newBelow = false }
+            StatusStrip(model: model, session: session, theme: theme)
+            Composer(session: session, theme: theme, model: model)
         }
-        .scrollToBottomBadge(newBelow)
-        .betweenListAndInputViewBuilder { StatusStrip(model: model, session: session, theme: theme) }
-        // Match exyte's bare list surfaces (background + scroll button) to our theme;
-        // messages, composer and the strip are our own views.
-        .chatTheme(colors: .init(mainBG: theme.screen, mainTint: theme.blurple, inputBG: theme.input))
+        .background(theme.screen)
         .onChange(of: rev) { _, _ in
             if !atBottom { newBelow = true }
         }
@@ -289,11 +296,12 @@ private struct StatusStrip: View {
 // MARK: - composer (ours; send routes through exyte so it resets its text state)
 
 private struct Composer: View {
-    let params: InputViewBuilderParameters
+    let params: Int? = nil   // legacy slot (exyte builder removed)
     let session: Session
     let theme: Theme
     @ObservedObject var model: ThreadModel
 
+    @State private var draft = ""
     @State private var attachments: [PickedAttachment] = []
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFiles = false
@@ -318,6 +326,19 @@ private struct Composer: View {
         if ProcessInfo.processInfo.environment["CR_MOCK"] != nil { return false }
         #endif
         return live.isPreview
+    }
+
+    private var inputField: some View {
+        TextField("", text: $draft, prompt: Text(placeholder).foregroundColor(theme.faint), axis: .vertical)
+            .font(AppFont.sans(15))
+            .foregroundStyle(theme.ink)
+            .tint(theme.blurple)
+            .lineLimit(1 ... 6)
+            .frame(minHeight: 24)
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+            .focused($inputFocused)
+            .disabled(typingDisabled)
     }
 
     @ViewBuilder
@@ -420,11 +441,11 @@ private struct Composer: View {
 
     private func doSend() {
         guard live.canDrive else { return }
-        guard canSend(params.text.wrappedValue) else { return }
+        guard canSend(draft) else { return }
         Haptics.light()
         sendTick.toggle()
-        model.send(params.text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines), attachments: attachments)
-        params.text.wrappedValue = ""
+        model.send(draft.trimmingCharacters(in: .whitespacesAndNewlines), attachments: attachments)
+        draft = ""
         attachments = []
     }
 
@@ -434,16 +455,7 @@ private struct Composer: View {
         // with a filled circular send button.
         VStack(alignment: .leading, spacing: 4) {
             if !attachments.isEmpty { previewStrip }
-            TextField("", text: params.text, prompt: Text(placeholder).foregroundColor(theme.faint), axis: .vertical)
-                .font(AppFont.sans(15))
-                .foregroundStyle(theme.ink)
-                .tint(theme.blurple)
-                .lineLimit(1 ... 6)
-                .frame(minHeight: 24)
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
-                .focused($inputFocused)
-                .disabled(typingDisabled)
+            inputField
             HStack(spacing: 10) {
                 Button { showAddSheet = true } label: {
                     Image(systemName: "plus")
@@ -482,10 +494,10 @@ private struct Composer: View {
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
-                        .background(canSend(params.text.wrappedValue) ? theme.blurple : theme.plusBtn, in: Circle())
+                        .background(canSend(draft) ? theme.blurple : theme.plusBtn, in: Circle())
                 }
-                .disabled(!canSend(params.text.wrappedValue))
-                .animation(.easeOut(duration: 0.15), value: canSend(params.text.wrappedValue))
+                .disabled(!canSend(draft))
+                .animation(.easeOut(duration: 0.15), value: canSend(draft))
             }
             .padding(.top, 6)
         }

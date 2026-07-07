@@ -122,10 +122,11 @@ final class ThreadModel: ObservableObject {
                     self.pendingOlder = lines + self.pendingOlder
                 case let .full(lines):
                     self.pendingOlder = []
+                    self.parseGen += 1
                     self.rawLines = self.capped(lines)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                         guard let self else { return }
-                        if self.rawLines.count < 120, !self.pendingOlder.isEmpty {
+                        if self.rawLines.count < 240, !self.pendingOlder.isEmpty {
                             self.mountOlderIfNeeded()
                         }
                     }
@@ -134,6 +135,7 @@ final class ThreadModel: ObservableObject {
                     self.reparseRemote()
                 case let .delta(lines):
                     let expected = self.rawLines.count + lines.count
+                    self.parseGen += 1
                     self.rawLines = self.capped(self.rawLines + lines)
                     if self.rawLines.count != expected {
                         // The head got trimmed by the cap — cached records no longer
@@ -298,12 +300,12 @@ final class ThreadModel: ObservableObject {
     /// next page (Discord-style). Small slices keep the table's height
     /// re-estimation error (and thus the anchor compensation error) tiny.
     func mountOlderIfNeeded() {
-        guard !pendingOlder.isEmpty else { return }
+        guard !pendingOlder.isEmpty, !mountInFlight else { return }
         // Page cut aligns to a USER record: a user turn always starts a new
         // group, so the seam between this page and the next never merges —
         // the NEXT mount is then a pure tail insert (no boundary-group id
         // shift, no fallback to the table-reloading slow path).
-        let page = 48
+        let page = 24
         var take = min(page, pendingOlder.count)
         // Extend to a user-record seam (never merges with the next page) but
         // CAP the walk — a marathon assistant turn with no user record in
@@ -315,6 +317,8 @@ final class ThreadModel: ObservableObject {
         }
         let slice = Array(pendingOlder.suffix(take))
         pendingOlder.removeLast(take)
+        parseGen += 1
+        mountInFlight = true
         rawLines = capped(slice + rawLines)
         cachedRecords = []
         decodedLineCount = 0
@@ -326,7 +330,7 @@ final class ThreadModel: ObservableObject {
         // lines) back-fills page by page WITHOUT waiting for a scroll event.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self else { return }
-            if self.rawLines.count < 120, !self.pendingOlder.isEmpty {
+            if self.rawLines.count < 240, !self.pendingOlder.isEmpty {
                 self.mountOlderIfNeeded()
             }
         }
@@ -344,7 +348,19 @@ final class ThreadModel: ObservableObject {
     /// Live context footprint from the transcript (last assistant turn's prompt
     /// tokens) — drives the composer's progress ring. Claude-family only.
     @Published var contextTokens: Int?
-    private var pendingOlder: [String] = []
+    private var pendingOlder: [String] = [] {
+        didSet { hasMoreHistory = !pendingOlder.isEmpty }
+    }
+    @Published var hasMoreHistory = false
+    /// Bumped on every rawLines mutation; detached parse/build passes carry
+    /// the generation they started from and drop their result if another
+    /// mutation landed meanwhile — without this, back-to-back mounts let an
+    /// OLDER timeline finish last and overwrite the newest one.
+    private var parseGen = 0
+    /// One mount at a time, from splice to timeline-applied. exyte's
+    /// pagination lock releases as soon as the closure returns (before the
+    /// table updates), so scroll callbacks could stack concurrent mounts.
+    private var mountInFlight = false
 
     /// Slash commands are instant TUI actions, not conversation turns — deliver
     /// without the optimistic bubble / working indicator (failures still surface
@@ -442,13 +458,20 @@ final class ThreadModel: ObservableObject {
         // far less traffic than a live Claude stream).
         if isCodex {
             let lines = rawLines
+            let gen = parseGen
             let spid = Perf.begin("reparse")
             Task.detached(priority: .userInitiated) {
                 let data = lines.joined(separator: "\n").data(using: .utf8) ?? Data()
                 let timeline = CodexTranscript.timeline(from: data)
                 await MainActor.run {
+                    guard gen == self.parseGen else {
+                        Perf.end("reparse", spid, "stale-gen")
+                        self.mountInFlight = false
+                        return
+                    }
                     Perf.end("reparse", spid, "lines=\(lines.count) items=\(timeline.items.count)")
                     self.applyParsed(timeline)
+                    self.mountInFlight = false
                 }
             }
             return
@@ -459,6 +482,7 @@ final class ThreadModel: ObservableObject {
         // delta tick costs O(Δ) decode instead of O(session).
         let priorCount = decodedLineCount
         let newLines = Array(rawLines.dropFirst(min(priorCount, rawLines.count)))
+        let gen = parseGen
         let spid = Perf.begin("reparse")
         Task.detached(priority: .userInitiated) {
             let data = newLines.joined(separator: "\n").data(using: .utf8) ?? Data()
@@ -466,8 +490,9 @@ final class ThreadModel: ObservableObject {
             await MainActor.run {
                 // A .full reset (or cap trim) raced in — this pass's baseline is
                 // stale; the reset already queued its own full pass.
-                guard self.decodedLineCount == priorCount else {
+                guard self.decodedLineCount == priorCount, gen == self.parseGen else {
                     Perf.end("reparse", spid, "stale")
+                    self.mountInFlight = false
                     return
                 }
                 self.cachedRecords += fresh
@@ -478,6 +503,11 @@ final class ThreadModel: ObservableObject {
                     let out = TranscriptParser.build(snapshot)
                     let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                     await MainActor.run {
+                        guard gen == self.parseGen else {
+                            Perf.end("reparse", spid, "stale-build")
+                            self.mountInFlight = false
+                            return
+                        }
                         Perf.end("reparse", spid, "Δ=\(newLines.count) recs=\(snapshot.count) items=\(out.timeline.items.count)")
                         #if DEBUG
                         NSLog("[perf] reparse Δ=%d recs=%d items=%d build=%.1fms",
@@ -485,6 +515,7 @@ final class ThreadModel: ObservableObject {
                         #endif
                         self.contextTokens = out.contextTokens
                         self.applyParsed(out.timeline)
+                        self.mountInFlight = false
                     }
                 }
             }

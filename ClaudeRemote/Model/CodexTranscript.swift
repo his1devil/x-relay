@@ -21,11 +21,22 @@ enum CodexTranscript {
         var out: [[String: Any]] = []
         out.reserveCapacity(max(16, data.count / 512))
         for slice in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
-            if let obj = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any] {
+            if var obj = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any] {
+                // Stable per-record anchor: the raw line's hash never changes
+                // when history is PREPENDED above it (a positional counter
+                // renumbered every row on prepend → full delete/insert churn
+                // + stale HeightOracle hits under reused ids).
+                obj["__lineKey"] = lineKey(slice)
                 out.append(obj)
             }
         }
         return out
+    }
+
+    private static func lineKey(_ slice: Data.SubSequence) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in slice { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return String(h, radix: 36)
     }
 
     // MARK: session metadata (for the list row) — all in `session_meta` (line 0)
@@ -94,7 +105,13 @@ enum CodexTranscript {
         var items: [TimelineItem] = []
         var group: AssistantGroup?
         var counter = 0
-        func nid(_ p: String) -> String { counter += 1; return "cx-\(p)-\(counter)" }
+        var recKey = ""
+        var recSeq = 0
+        func nid(_ p: String) -> String {
+            if recKey.isEmpty { counter += 1; return "cx-\(p)-\(counter)" }
+            recSeq += 1
+            return "cx-\(p)-\(recKey)-\(recSeq)"
+        }
         func flush() {
             if let g = group, !g.blocks.isEmpty { items.append(.assistant(g)) }
             group = nil
@@ -105,6 +122,8 @@ enum CodexTranscript {
 
         for r in recs where (r["type"] as? String) == "response_item" {
             guard let p = r["payload"] as? [String: Any] else { continue }
+            recKey = r["__lineKey"] as? String ?? ""
+            recSeq = 0
             let time = date(r["timestamp"] as? String)
             switch p["type"] as? String {
             case "message":

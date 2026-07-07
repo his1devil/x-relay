@@ -341,6 +341,8 @@ function subscribe(id) {
 // fast; the live watcher then streams new lines (small frames) from EOF.
 const THREAD_TAIL = 600_000;
 const THREAD_MAX_LINES = 400;
+const subscriberProto2 = new Set();
+
 function sendThread(id) {
   const file = findFile(id);
   if (!file) return;
@@ -360,7 +362,25 @@ function sendThread(id) {
   let lines = text.split("\n").filter(Boolean);
   if (lines.length > THREAD_MAX_LINES) lines = lines.slice(-THREAD_MAX_LINES);
   console.log(`[thread] ${id} lines=${lines.length} (size=${size})`);
-  send({ type: "thread", id, lines });
+  if (!subscriberProto2.has(id)) {
+    send({ type: "thread", id, lines });
+    return;
+  }
+  // proto>=2: batch ≤64KB so relay keep-alives interleave on slow links and
+  // the phone can lazy-mount older batches (mirrors vibTTY RemoteBridge).
+  const MAX_BATCH = 64 * 1024;
+  const batches = [];
+  let cur = [], sz = 0;
+  for (const l of lines) {
+    if (sz + l.length > MAX_BATCH && cur.length) { batches.push(cur); cur = []; sz = 0; }
+    cur.push(l); sz += l.length + 1;
+  }
+  if (cur.length) batches.push(cur);
+  const newest = batches.pop() || [];
+  send({ type: "thread", id, lines: newest });
+  batches.reverse().forEach((older, n) => {
+    setTimeout(() => send({ type: "thread", id, lines: older, prepend: true }), 80 * (n + 1));
+  });
   const e = subs.get(id);
   if (e) e.offset = size;
 }
@@ -400,7 +420,11 @@ function handle(msg) {
   console.log(`[recv] ${msg.type}`);
   switch (msg.type) {
     case "list": pushSessions(); break;
-    case "subscribe": subscribe(msg.id); break;
+    case "subscribe":
+      if ((msg.proto | 0) >= 2) subscriberProto2.add(msg.id);
+      else subscriberProto2.delete(msg.id);
+      subscribe(msg.id);
+      break;
     case "unsubscribe": unsubscribe(msg.id); break;
     case "send": drive(msg.id, msg.text); break;
     case "permission-decision": resolvePermission(msg.id, msg.decision); break;

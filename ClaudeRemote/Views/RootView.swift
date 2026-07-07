@@ -12,6 +12,16 @@ struct RootView: View {
     @State private var bannerWork: DispatchWorkItem?
 
     var body: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CR_SPIKE"] != nil {
+            SpikeList()
+        } else { main }
+        #else
+        main
+        #endif
+    }
+
+    private var main: some View {
         ZStack {
             NavigationStack(path: $path) {
                 SessionsDrawerView()

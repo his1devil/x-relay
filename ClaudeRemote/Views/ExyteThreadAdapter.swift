@@ -31,6 +31,16 @@ final class ExyteThreadAdapter: ObservableObject {
     private(set) var lastAppendedId: String?
     private(set) var lastAppendAt = Date.distantPast
     private var didInitialLoad = false
+    /// Exact-height pipeline (P1): rows measured off-screen before the list
+    /// sees them. Configured by the pane with theme+agent for twin parity.
+    let oracle = HeightOracle()
+    private var twinTheme: Theme?
+    private var twinAgent: AgentKind = .claude
+
+    func configureTwin(theme: Theme, agent: AgentKind) {
+        twinTheme = theme
+        twinAgent = agent
+    }
 
     private let meUser: ExyteChat.User
     private let agentUser: ExyteChat.User
@@ -64,6 +74,18 @@ final class ExyteThreadAdapter: ObservableObject {
         var dict = [String: TimelineItem](minimumCapacity: items.count)
         var ids: [String] = []
         ids.reserveCapacity(items.count + 1)
+        // Streaming mutates the TAIL rows' content under their cached heights —
+        // drop the last few so they re-measure (or self-size) with fresh content.
+        for tail in items.suffix(4) { oracle.invalidate(id: tail.id) }
+        if let theme = twinTheme {
+            let width = UIScreen.main.bounds.width
+            for item in items {
+                oracle.measure(id: item.id, width: width) {
+                    TimelineItemView(item: item, agent: twinAgent)
+                        .environment(\.theme, theme)
+                }
+            }
+        }
         for item in items {
             dict[item.id] = item
             ids.append(item.id)
