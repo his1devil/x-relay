@@ -126,9 +126,18 @@ private struct ChatPane: View, Equatable {
         .setAvailableInputs([.text])
         .keyboardDismissMode(.interactive)
         .showScrollToBottomButton(true)
-        .enableLoadMore(offset: 3) { [weak model] in
-            Task { @MainActor in model?.mountOlderIfNeeded() }
-        }
+        // pixels trigger: checked on EVERY scroll frame (and trivially true
+        // when content is shorter than the viewport, so a thin first frame
+        // auto-back-fills to a full screen). The cellIndex/willDisplay
+        // trigger never fired when the oldest row was already on screen at
+        // initial layout (updateInProgress swallowed it) — lazy mounts
+        // silently never started.
+        .enableLoadMoreOlderMessages(
+            triggerType: .pixels(1400),
+            handleClosure: { [weak model] in
+                await MainActor.run { model?.mountOlderIfNeeded() }
+            }
+        )
         .onScrolledToBottomChanged { bottom in
             atBottom = bottom
             if bottom { newBelow = false }

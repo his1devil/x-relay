@@ -123,6 +123,12 @@ final class ThreadModel: ObservableObject {
                 case let .full(lines):
                     self.pendingOlder = []
                     self.rawLines = self.capped(lines)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        guard let self else { return }
+                        if self.rawLines.count < 120, !self.pendingOlder.isEmpty {
+                            self.mountOlderIfNeeded()
+                        }
+                    }
                     self.cachedRecords = []
                     self.decodedLineCount = 0
                     self.reparseRemote()
@@ -293,13 +299,37 @@ final class ThreadModel: ObservableObject {
     /// re-estimation error (and thus the anchor compensation error) tiny.
     func mountOlderIfNeeded() {
         guard !pendingOlder.isEmpty else { return }
+        // Page cut aligns to a USER record: a user turn always starts a new
+        // group, so the seam between this page and the next never merges —
+        // the NEXT mount is then a pure tail insert (no boundary-group id
+        // shift, no fallback to the table-reloading slow path).
         let page = 48
-        let slice = Array(pendingOlder.suffix(page))
-        pendingOlder.removeLast(slice.count)
+        var take = min(page, pendingOlder.count)
+        // Extend to a user-record seam (never merges with the next page) but
+        // CAP the walk — a marathon assistant turn with no user record in
+        // sight once swallowed a 209-line buffer into one mega-mount.
+        let cap = min(page * 2, pendingOlder.count)
+        while take < cap {
+            if pendingOlder[pendingOlder.count - take].contains("\"type\":\"user\"") { break }
+            take += 1
+        }
+        let slice = Array(pendingOlder.suffix(take))
+        pendingOlder.removeLast(take)
         rawLines = capped(slice + rawLines)
         cachedRecords = []
         decodedLineCount = 0
-        scheduleReparseRemote()
+        // Immediate (not debounced): back-to-back mounts must land as
+        // SEPARATE small tail-inserts — the debounce once fused three pages
+        // into one 220-line mega-update that rippled the whole table.
+        reparseRemote()
+        // Keep a screen and a half of runway: a thin initial frame (a few
+        // lines) back-fills page by page WITHOUT waiting for a scroll event.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            if self.rawLines.count < 120, !self.pendingOlder.isEmpty {
+                self.mountOlderIfNeeded()
+            }
+        }
     }
 
     private func attachmentSummary(_ items: [PickedAttachment]) -> String {
