@@ -287,12 +287,16 @@ final class ThreadModel: ObservableObject {
         }
     }
 
-    /// Splice buffered older history into the timeline — called when the user
-    /// scrolls near the top. No-op when the buffer is empty.
+    /// Splice ONE PAGE of buffered older history into the timeline — called
+    /// when the user scrolls near the top; reaching the top again mounts the
+    /// next page (Discord-style). Small slices keep the table's height
+    /// re-estimation error (and thus the anchor compensation error) tiny.
     func mountOlderIfNeeded() {
         guard !pendingOlder.isEmpty else { return }
-        rawLines = capped(pendingOlder + rawLines)
-        pendingOlder = []
+        let page = 48
+        let slice = Array(pendingOlder.suffix(page))
+        pendingOlder.removeLast(slice.count)
+        rawLines = capped(slice + rawLines)
         cachedRecords = []
         decodedLineCount = 0
         scheduleReparseRemote()
