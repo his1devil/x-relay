@@ -77,6 +77,7 @@ final class ThreadModel: ObservableObject {
 
     func start() {
         firstScreenReady = false
+        initialFillDone = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, !self.firstScreenReady else { return }
             if !self.items.isEmpty { self.revealFirstScreen() }
@@ -119,13 +120,19 @@ final class ThreadModel: ObservableObject {
                 switch update {
                 case let .prepend(lines):
                     // Connect races re-run the whole tail sequence — the same
-                    // older batch can arrive twice. Batches are identified by
-                    // their first line; repeats are dropped.
-                    if let first = lines.first, self.parkedBatchKeys.contains(first) { return }
-                    if let first = lines.first { self.parkedBatchKeys.insert(first) }
+                    // older batch can arrive twice. Dedup against the BUFFER
+                    // ITSELF (not a separate key set: keys survived the
+                    // dup-tail guard's early return, so a re-run's batches
+                    // all hit stale keys and were dropped wholesale — the
+                    // curtain backfill starved and the thread opened as one
+                    // lonely message on a blank page).
+                    if let first = lines.first, self.pendingOlder.contains(first) { return }
                     self.revealSettleWork?.cancel()   // stream is NOT quiet
-                    if !self.firstScreenReady, self.rawLines.count < 120 {
-                        self.mountOlderIfNeeded()     // curtain-phase backfill
+                    NSLog("[halx-curtain] prepend arrived ready=%d raw=%d buf=%d inFlight=%d",
+                          self.firstScreenReady ? 1 : 0, self.rawLines.count,
+                          self.pendingOlder.count, self.mountInFlight ? 1 : 0)
+                    if !self.initialFillDone, self.rawLines.count < 120 {
+                        self.mountOlderIfNeeded()     // initial-fill backfill
                     }
                     // LAZY history: older batches park in a buffer and the UI
                     // is not touched at all — no reparse, no list churn. They
@@ -145,12 +152,11 @@ final class ThreadModel: ObservableObject {
                         return
                     }
                     self.pendingOlder = []
-                    self.parkedBatchKeys = []
                     self.parseGen += 1
                     self.rawLines = self.capped(lines)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                         guard let self else { return }
-                        if !self.firstScreenReady, self.rawLines.count < 120, !self.pendingOlder.isEmpty {
+                        if !self.initialFillDone, self.rawLines.count < 120, !self.pendingOlder.isEmpty {
                             self.mountOlderIfNeeded()
                         }
                     }
@@ -336,6 +342,7 @@ final class ThreadModel: ObservableObject {
     /// requested order: release → messages return home → loading → history
     /// appears above, current screen untouched.
     func pullOlderHistory() {
+        initialFillDone = true   // user took over — no more automatic mounts
         guard !pullArmedFlag, !loadingOlder, hasMoreHistory else { return }
         pullArmedFlag = true
         Haptics.rigid()
@@ -421,6 +428,12 @@ final class ThreadModel: ObservableObject {
     /// newest message. After the reveal NOTHING mounts automatically; older
     /// history is strictly pull-to-load (user-driven).
     @Published var firstScreenReady = false
+    /// Initial fill (~120 lines) runs INDEPENDENTLY of the reveal: the settle
+    /// timer can drop the curtain 300ms before the first buffered batch lands
+    /// (network jitter), and gating back-fill on the curtain then starved the
+    /// buffer forever — the thread opened as one message on a blank page.
+    /// While pinned to the bottom the user can't perceive top-side mounts.
+    private var initialFillDone = false
     /// Pull-to-load state: overlay spinner while a history chunk assembles.
     @Published var loadingOlder = false
     /// Bumped every time parsed items replace the timeline — the list keys
@@ -429,7 +442,6 @@ final class ThreadModel: ObservableObject {
     /// to the new chunk).
     @Published var mountTick = 0
     private var revealSettleWork: DispatchWorkItem?
-    private var parkedBatchKeys: Set<String> = []
     /// Bumped on every rawLines mutation; detached parse/build passes carry
     /// the generation they started from and drop their result if another
     /// mutation landed meanwhile — without this, back-to-back mounts let an
@@ -633,8 +645,11 @@ final class ThreadModel: ObservableObject {
         // Curtain-phase backfill: keep assembling pages toward the quota
         // while the skeleton is still up (single-flight blocked mid-stream
         // batches; chaining from here is race-free). Stops at reveal.
-        if !firstScreenReady, rawLines.count < 120, !pendingOlder.isEmpty {
-            DispatchQueue.main.async { [weak self] in self?.mountOlderIfNeeded() }
+        if !initialFillDone {
+            if rawLines.count >= 120 { initialFillDone = true }
+            else if !pendingOlder.isEmpty {
+                DispatchQueue.main.async { [weak self] in self?.mountOlderIfNeeded() }
+            }
         }
         // The real user message streamed in → drop the optimistic copy.
         if let opt = optimisticUser, lastUserText() == opt {
