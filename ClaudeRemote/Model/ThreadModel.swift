@@ -615,6 +615,11 @@ final class ThreadModel: ObservableObject {
     private func revealFirstScreen() {
         guard !firstScreenReady else { return }
         firstScreenReady = true
+        // The un-cover moment must also LAND the viewport on the newest
+        // message: some previews revealed mid-list (the jump badge lit — the
+        // system knew newer content was below — but nothing scrolled).
+        // mountTick drives the list's pinned-phase settle.
+        mountTick += 1
     }
 
     private func evaluateFirstScreen() {

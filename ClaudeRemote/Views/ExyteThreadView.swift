@@ -121,8 +121,14 @@ private struct ChatPane: View {
 
     var body: some View {
         let _ = Perf.event("chatPaneBody", "rev=\(rev) n=\(model.items.count)")
-        VStack(spacing: 0) {
-            ZStack(alignment: .bottomTrailing) {
+        // SINGLE layout authority for the keyboard: the list fills the
+        // screen and the composer lives in its bottom safe-area inset.
+        // Keyboard avoidance then grows the inset instead of resizing the
+        // list — the classic UIKit inset architecture, so the newest
+        // message rides the keyboard with ZERO manual offset work. (A
+        // plain VStack sibling + manual UIKit offset animation formed two
+        // competing controllers: squeeze, then bounce-correct.)
+        ZStack(alignment: .bottomTrailing) {
                 NativeTimelineList(
                     items: model.items,
                     agent: session.agent,
@@ -158,9 +164,12 @@ private struct ChatPane: View {
                     .padding(.bottom, 10)
                     .transition(.scale.combined(with: .opacity))
                 }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                StatusStrip(model: model, session: session, theme: theme)
+                Composer(session: session, theme: theme, model: model)
             }
-            StatusStrip(model: model, session: session, theme: theme)
-            Composer(session: session, theme: theme, model: model)
         }
         .background(theme.screen)
         .onChange(of: rev) { _, _ in

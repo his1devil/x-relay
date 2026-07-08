@@ -65,7 +65,7 @@ struct NativeTimelineList: View {
         func attempt() {
             proxy.scrollTo("cr-bottom", anchor: .bottom)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                if !atBottom, settleTries < 15 {
+                if !atBottom, settleTries < 40 {
                     settleTries += 1
                     attempt()
                 }
@@ -166,9 +166,14 @@ struct NativeTimelineList: View {
                         .id("cr-bottom")
                         .onAppear { atBottom = true; onAtBottomChanged(true) }
                         .onDisappear {
+                            // Keyboard transitions must not count as the user
+                            // leaving the bottom (order matters: the guard
+                            // check ran AFTER state was already torn down,
+                            // so follow-mode died and the jump button popped
+                            // during every keyboard move).
+                            if kbGuard { return }
                             atBottom = false
                             onAtBottomChanged(false)
-                            if kbGuard { return }
                             // While pinned (posID nil + bottom anchor) the
                             // sentinel CANNOT leave the viewport — so its
                             // disappearance is, by elimination, the user's
@@ -255,24 +260,14 @@ struct NativeTimelineList: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                // Follow the keyboard: if the reader is at the newest message
-                // the list rides up with it instead of being covered.
-                let follow = atBottom
+                // Inset architecture handles the geometry; we only guard the
+                // sentinel misreads during the transition.
                 kbGuard = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { kbGuard = false }
-                if follow {
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("cr-bottom", anchor: .bottom) }
-                    settleToBottom(proxy)
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                let follow = atBottom
                 kbGuard = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { kbGuard = false }
-                if follow {
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("cr-bottom", anchor: .bottom) }
-                    settleToBottom(proxy)
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
             }
             .onChange(of: jumpToBottom) { _, go in
                 if go {
