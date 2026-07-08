@@ -43,7 +43,8 @@ struct MobileTerminalView: View {
                     let axes: Axis.Set = contentW > geo.size.width + 1 ? [.vertical, .horizontal] : .vertical
                     ScrollView(axes) {
                         TerminalCanvas(grid: g, fontSize: fontSize, cellW: cellW, cellH: cellH,
-                                       selection: selectedRows)
+                                       selection: selectedRows,
+                                       themeFG: theme.ink, themeBG: theme.screen, isDark: theme.isDark)
                             .frame(width: max(geo.size.width, contentW),
                                    height: CGFloat(g.totalRows) * cellH + 12)
                             .contentShape(Rectangle())
@@ -93,12 +94,12 @@ struct MobileTerminalView: View {
             MobileKeyBar(onText: onText, onKeys: onKeys)
                 .equatable()
         }
-        .background((g?.styles.first.flatMap { Color(termHex: $0.background) } ?? .black).ignoresSafeArea())
+        .background(theme.screen.ignoresSafeArea())
     }
 
     private func selectionBar(_ sel: ClosedRange<Int>, grid g: TerminalGrid) -> some View {
         HStack(spacing: 10) {
-            Text("\(sel.count) 行").font(AppFont.mono(11)).foregroundStyle(.white.opacity(0.7))
+            Text("\(sel.count) 行").font(AppFont.mono(11)).foregroundStyle(theme.muted)
             Button {
                 UIPasteboard.general.string = g.plainText(rows: sel)
                 copied = true
@@ -111,27 +112,46 @@ struct MobileTerminalView: View {
             .buttonStyle(.borderedProminent).controlSize(.mini).tint(theme.blurple)
             Spacer()
             Button { selectedRows = nil } label: {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.7))
+                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.muted)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.black.opacity(0.85))
+        .background(theme.card.opacity(0.96))
     }
 }
 
 /// Single-pass Canvas: background runs first, then glyph runs, then cursor.
+/// The grid's DEFAULT fg/bg pair (style id 0 — the terminal theme's base) is
+/// remapped to the HALX theme so the Mobile tab reads white-on-dark in dark
+/// mode and dark-on-white in light; syntax colors pass through untouched.
+/// (The 镜像 tab keeps vibTTY's own colors — that's its point.)
 private struct TerminalCanvas: View {
     let grid: TerminalGrid
     let fontSize: CGFloat
     let cellW: CGFloat
     let cellH: CGFloat
     let selection: ClosedRange<Int>?
+    let themeFG: Color
+    let themeBG: Color
+    let isDark: Bool
 
     var body: some View {
         Canvas { ctx, _ in
             var styleByID: [Int: TerminalGrid.Style] = [:]
             for s in grid.styles { styleByID[s.id] = s }
+            let defFG = grid.styles.first?.foreground
+            let defBG = grid.styles.first?.background
+            func mapFG(_ hex: String?) -> Color? {
+                guard let hex else { return themeFG }
+                if hex == defFG { return themeFG }
+                return Color(termHex: hex)
+            }
+            func mapBG(_ hex: String?) -> Color? {
+                guard let hex else { return nil }
+                if hex == defBG { return nil }   // base bg = the view's own background
+                return Color(termHex: hex)
+            }
             let pad: CGFloat = 6
             for sp in grid.row_spans {
                 let st = styleByID[sp.style_id]
@@ -139,7 +159,7 @@ private struct TerminalCanvas: View {
                 let y = pad + CGFloat(sp.row) * cellH
                 let fgHex = (st?.inverse == true) ? st?.background : st?.foreground
                 let bgHex = (st?.inverse == true) ? st?.foreground : st?.background
-                if let bgHex, let bg = Color(termHex: bgHex) {
+                if let bg = (st?.inverse == true ? (fgHex == defFG ? themeFG : mapBG(bgHex)) : mapBG(bgHex)) {
                     ctx.fill(Path(CGRect(x: x, y: y, width: CGFloat(sp.text.count) * cellW, height: cellH)),
                              with: .color(bg))
                 }
@@ -147,7 +167,7 @@ private struct TerminalCanvas: View {
                 var font = Font.system(size: fontSize, weight: st?.bold == true ? .bold : .regular, design: .monospaced)
                 if st?.italic == true { font = font.italic() }
                 attr.font = font
-                var fg = fgHex.flatMap { Color(termHex: $0) } ?? .white
+                var fg = (st?.inverse == true ? (bgHex == defBG ? themeBG : mapFG(bgHex)) : mapFG(fgHex)) ?? themeFG
                 if st?.faint == true { fg = fg.opacity(0.6) }
                 attr.foregroundColor = fg
                 if st?.underline == true { attr.underlineStyle = .single }
@@ -157,12 +177,12 @@ private struct TerminalCanvas: View {
             if let cur = grid.cursor, cur.visible != false, let r = cur.row, let c = cur.column {
                 let rect = CGRect(x: pad + CGFloat(c) * cellW, y: pad + CGFloat(r) * cellH,
                                   width: cellW, height: cellH)
-                ctx.fill(Path(rect), with: .color(.white.opacity(0.55)))
+                ctx.fill(Path(rect), with: .color(isDark ? .white.opacity(0.55) : .black.opacity(0.4)))
             }
             if let sel = selection {
                 let rect = CGRect(x: 0, y: pad + CGFloat(sel.lowerBound) * cellH,
                                   width: 40000, height: CGFloat(sel.count) * cellH)
-                ctx.fill(Path(rect), with: .color(.white.opacity(0.14)))
+                ctx.fill(Path(rect), with: .color(isDark ? .white.opacity(0.14) : .black.opacity(0.08)))
             }
         }
     }
@@ -201,11 +221,11 @@ private struct MobileKeyBar: View, Equatable {
                 }
                 .padding(.horizontal, 10).padding(.vertical, 6)
             }
-            .background(.black.opacity(0.35))
+            .background(theme.card.opacity(0.5))
             HStack(spacing: 8) {
-                TextField("", text: $input, prompt: Text("输入命令…").foregroundColor(.white.opacity(0.35)))
+                TextField("", text: $input, prompt: Text("输入命令…").foregroundColor(theme.faint))
                     .font(AppFont.mono(13))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.ink)
                     .tint(theme.blurple)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -214,13 +234,13 @@ private struct MobileKeyBar: View, Equatable {
                 Button { send(enter: true) } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 24))
-                        .foregroundStyle(input.isEmpty ? .white.opacity(0.25) : theme.blurple)
+                        .foregroundStyle(input.isEmpty ? theme.faint : theme.blurple)
                 }
                 .buttonStyle(.plain)
                 .disabled(input.isEmpty)
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.black.opacity(0.5))
+            .background(theme.card.opacity(0.7))
         }
     }
 
@@ -246,9 +266,9 @@ private struct MobileKeyBar: View, Equatable {
                 }
             }
             .font(AppFont.mono(12, .medium))
-            .foregroundStyle(active ? Color.black : .white.opacity(0.85))
+            .foregroundStyle(active ? theme.screen : theme.ink.opacity(0.85))
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(active ? Color.white : .white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .background(active ? theme.ink : theme.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
@@ -256,6 +276,7 @@ private struct MobileKeyBar: View, Equatable {
 
 /// Arrow key with press-and-hold auto-repeat (TUI navigation lifesaver).
 private struct RepeatKey: View {
+    @Environment(\.theme) private var theme
     let symbol: String
     let fire: () -> Void
     @State private var timer: Timer?
@@ -263,9 +284,9 @@ private struct RepeatKey: View {
     var body: some View {
         Image(systemName: symbol)
             .font(AppFont.mono(12, .medium))
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(theme.ink.opacity(0.85))
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .background(theme.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             .onLongPressGesture(minimumDuration: 0.4, pressing: { pressing in
                 if pressing {
                     fire(); Haptics.selection()

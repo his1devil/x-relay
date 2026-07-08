@@ -37,14 +37,29 @@ struct ExyteThreadView: View {
                 VStack(spacing: 0) {
                     // Mobile-first renderer is the default; the legacy mirror
                     // stays one tap away (same frames, same send pipeline).
-                    Picker("", selection: $terminalStyle) {
-                        Text("Mobile").tag("mobile")
-                        Text("镜像").tag("mirror")
+                    HStack(spacing: 4) {
+                        ForEach([("mobile", "Mobile"), ("mirror", "镜像")], id: \.0) { tag, label in
+                            let selected = terminalStyle == tag
+                            Button { terminalStyle = tag } label: {
+                                Text(label)
+                                    .font(AppFont.sans(12.5, .semibold))
+                                    .foregroundStyle(selected ? theme.ink : theme.muted)
+                                    .padding(.horizontal, 18).padding(.vertical, 5)
+                                    .background(
+                                        selected ? AnyShapeStyle(theme.isDark ? theme.card : theme.screen)
+                                                 : AnyShapeStyle(.clear),
+                                        in: Capsule()
+                                    )
+                                    .shadow(color: .black.opacity(selected && !theme.isDark ? 0.16 : 0), radius: 2.5, y: 1)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 60)
-                    .padding(.vertical, 4)
-                    .background(Color.black)
+                    .padding(3)
+                    .background(theme.isDark ? theme.codebg : Color.black.opacity(0.05), in: Capsule())
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(theme.screen)
                     if terminalStyle == "mirror" {
                         TerminalMirrorView(
                             frame: model.gridFrame,
