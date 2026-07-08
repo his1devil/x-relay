@@ -192,6 +192,7 @@ private struct MobileKeyBar: View, Equatable {
                     RepeatKey(symbol: "arrow.down") { onKeys(["down"]) }
                     RepeatKey(symbol: "arrow.left") { onKeys(["left"]) }
                     RepeatKey(symbol: "arrow.right") { onKeys(["right"]) }
+                    RepeatKey(symbol: "delete.left") { onKeys(["backspace"]) }
                     key("^C") { onText("\u{03}", false) }
                     key("paste") {
                         if let s = UIPasteboard.general.string, !s.isEmpty { onText(s, false) }
