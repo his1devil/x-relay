@@ -66,9 +66,13 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
                 scroll.addGestureRecognizer(pan)
                 scroll.panGestureRecognizer.require(toFail: pan)
                 installed = true
+                NSLog("[halx-catcher] installed on %@ h=%.0f", String(describing: type(of: scroll)), scroll.bounds.height)
                 return
             }
-            guard retriesLeft > 0 else { return }
+            guard retriesLeft > 0 else {
+                NSLog("[halx-catcher] gave up — no tall scroll host found")
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.attemptInstall(retriesLeft: retriesLeft - 1)
             }

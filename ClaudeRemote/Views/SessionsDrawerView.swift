@@ -602,18 +602,40 @@ struct SessionsDrawerView: View {
             if relay.anyEnabled && relay.state != .online && scoped.isEmpty {
                 skeletonList   // connecting: shimmer placeholder rows, not a bare spinner
             } else if !searchText.isEmpty || chip != .all {
-                VStack(spacing: 10) {
-                    Spacer()
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .font(.system(size: 30, weight: .light)).foregroundStyle(theme.faint)
-                    Text("No matches").font(AppFont.sans(13.5, .semibold)).foregroundStyle(theme.muted)
-                    Button("Clear filters") { searchText = ""; chip = .all }
-                        .font(AppFont.sans(12.5, .semibold)).foregroundStyle(theme.blurple)
-                    Spacer()
+                // Empty branches ride inside a ScrollView too: the rail-swipe
+                // catcher needs a scroll host, and hanging it only on the
+                // populated list meant a BLANK session list had no right-swipe
+                // drawer at all (fresh installs / empty rooms hit this).
+                ScrollView {
+                    VStack(spacing: 10) {
+                        Spacer()
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 30, weight: .light)).foregroundStyle(theme.faint)
+                        Text("No matches").font(AppFont.sans(13.5, .semibold)).foregroundStyle(theme.muted)
+                        Button("Clear filters") { searchText = ""; chip = .all }
+                            .font(AppFont.sans(12.5, .semibold)).foregroundStyle(theme.blurple)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .containerRelativeFrame(.vertical)
                 }
-                .frame(maxWidth: .infinity)
+                .scrollIndicators(.hidden)
+                .background(HorizontalSwipeCatcher(
+                    onBegin: { dragBox.begin() },
+                    onTrack: { dragBox.track($0) },
+                    onRelease: { dragBox.release($0, $1) }
+                ))
             } else {
-                emptyState
+                ScrollView {
+                    emptyState
+                        .containerRelativeFrame(.vertical)
+                }
+                .scrollIndicators(.hidden)
+                .background(HorizontalSwipeCatcher(
+                    onBegin: { dragBox.begin() },
+                    onTrack: { dragBox.track($0) },
+                    onRelease: { dragBox.release($0, $1) }
+                ))
             }
         } else {
             ScrollView {
