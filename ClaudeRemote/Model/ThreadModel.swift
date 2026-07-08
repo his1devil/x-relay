@@ -483,7 +483,12 @@ final class ThreadModel: ObservableObject {
         if let sid = info.sessionId, sid != sessionId {
             working = false
             workStartedAt = nil
-            if jumpHint?.reason != .redirected {
+            // Same guard the session list applies to hook overrides: the hook
+            // can report a session that hasn't written its transcript yet —
+            // it isn't in the list, the banner's target can never resolve,
+            // and it wedged on "Syncing session list…" atop a session the
+            // list itself calls Connected. Wait for the list to know it.
+            if jumpHint?.reason != .redirected, listedIds.contains(sid) {
                 jumpHint = JumpHint(sessionId: sid, reason: .newer)
             }
             return

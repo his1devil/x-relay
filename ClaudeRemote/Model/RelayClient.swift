@@ -325,6 +325,12 @@ final class RelayClient: ObservableObject {
         if task == nil { connect() }
         else if Date().timeIntervalSince(lastRxAt) > livenessTimeout {
             forceReconnect("foreground: stale link")
+        } else if state == .online {
+            // The link survived backgrounding, but every push the agent sent
+            // while iOS had the socket suspended is GONE (the relay doesn't
+            // buffer). Pull one fresh list so toggled panes / agent flips
+            // show up without a manual pull-to-refresh.
+            requestSessions()
         }
     }
 
