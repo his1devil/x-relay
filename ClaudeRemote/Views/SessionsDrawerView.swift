@@ -733,7 +733,8 @@ struct SessionsDrawerView: View {
 
         case let .session(s):
             NavigationLink(value: s) {
-                ChannelRow(session: s, live: busyState(s), isLastOpened: s.id == lastSessionId)
+                ChannelRow(session: s, live: busyState(s), isLastOpened: s.id == lastSessionId,
+                           stateKey: "\(s.canDrive)|\(s.agentAlive)|\(s.status)")
             }
             .buttonStyle(PressableStyle(scale: 0.98))
         }
@@ -929,6 +930,11 @@ private struct ChannelRow: View {
     let session: Session
     var live: RelayClient.AgentStateInfo? = nil   // hook truth for this cwd (multi-Mac merged)
     var isLastOpened = false
+    /// Session's == compares id ONLY (Hashable contract elsewhere), so SwiftUI
+    /// treats a row whose canDrive/status flipped as unchanged and skips its
+    /// body — the Drivable chip count moved while row badges froze. This POD
+    /// key makes state flips visible to the diff.
+    var stateKey = ""
 
     private var busy: Bool { ["thinking", "tool", "compacting"].contains(live?.state ?? "") }
     private var needsPerm: Bool { live?.state == "needsPermission" }
