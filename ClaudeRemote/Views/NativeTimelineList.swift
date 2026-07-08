@@ -46,12 +46,33 @@ struct NativeTimelineList: View {
     @State private var scrollViewRef: UIScrollView?
     @State private var pullArmed = false
     @State private var pullAnchorID: String?
+    /// Keyboard transitions hide the bottom sentinel — that must not count
+    /// as the user scrolling (it killed the pin and broke give-back).
+    @State private var kbGuard = false
+    @State private var settleTries = 0
     @State private var endHintVisible = false
     /// Until the user drags, the viewport is PINNED to the newest message:
     /// opening lands at the bottom and back-filled history grows silently
     /// above. First drag hands control to the user (spinner paging takes
     /// over at the top).
     @State private var userHasScrolled = false
+
+    /// Scroll to the newest message and RETRY until the bottom sentinel
+    /// confirms (one-shot scrollTo raced iOS 26's layout cadence and stalled
+    /// mid-list on some sessions).
+    private func settleToBottom(_ proxy: ScrollViewProxy) {
+        settleTries = 0
+        func attempt() {
+            proxy.scrollTo("cr-bottom", anchor: .bottom)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                if !atBottom, settleTries < 15 {
+                    settleTries += 1
+                    attempt()
+                }
+            }
+        }
+        attempt()
+    }
 
     private func showEndHint() {
         endHintVisible = true
@@ -147,6 +168,7 @@ struct NativeTimelineList: View {
                         .onDisappear {
                             atBottom = false
                             onAtBottomChanged(false)
+                            if kbGuard { return }
                             // While pinned (posID nil + bottom anchor) the
                             // sentinel CANNOT leave the viewport — so its
                             // disappearance is, by elimination, the user's
@@ -164,7 +186,7 @@ struct NativeTimelineList: View {
             .scrollDismissesKeyboard(.interactively)
             .onAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    proxy.scrollTo("cr-bottom", anchor: .bottom)
+                    settleToBottom(proxy)
                 }
             }
             .simultaneousGesture(TapGesture().onEnded {
@@ -212,8 +234,7 @@ struct NativeTimelineList: View {
                     // defaultScrollAnchor(.bottom) can overshoot into empty
                     // space under lazy estimation (viewport past the real
                     // content after the hug-frame removal) — land explicitly.
-                    proxy.scrollTo("cr-bottom", anchor: .bottom)
-                    DispatchQueue.main.async { proxy.scrollTo("cr-bottom", anchor: .bottom) }
+                    settleToBottom(proxy)
                 }
             }
 
@@ -231,6 +252,26 @@ struct NativeTimelineList: View {
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo("cr-bottom", anchor: .bottom)
                     }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                // Follow the keyboard: if the reader is at the newest message
+                // the list rides up with it instead of being covered.
+                let follow = atBottom
+                kbGuard = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { kbGuard = false }
+                if follow {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("cr-bottom", anchor: .bottom) }
+                    settleToBottom(proxy)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                let follow = atBottom
+                kbGuard = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { kbGuard = false }
+                if follow {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("cr-bottom", anchor: .bottom) }
+                    settleToBottom(proxy)
                 }
             }
             .onChange(of: jumpToBottom) { _, go in
