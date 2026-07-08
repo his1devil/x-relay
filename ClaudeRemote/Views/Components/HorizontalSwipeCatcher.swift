@@ -69,7 +69,15 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
                 // very left edge — outside the list pan's comfort zone and
                 // flaky across iOS versions. A screen-edge recognizer on the
                 // WINDOW is the system-native way and always wins there.
-                if let window = self.window, window.gestureRecognizers?.contains(where: { $0.name == "cr-edge" }) != true {
+                if let window = self.window {
+                    // TAKE OVER, never skip: the recognizer outlives this
+                    // view (it's on the window), but its target/delegate is
+                    // us. Empty↔populated list flips rebuild the catcher —
+                    // the old recognizer became an orphan pointing at a
+                    // deallocated view and the edge swipe silently died.
+                    if let orphan = window.gestureRecognizers?.first(where: { $0.name == "cr-edge" }) {
+                        window.removeGestureRecognizer(orphan)
+                    }
                     let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdge(_:)))
                     edge.edges = .left
                     edge.name = "cr-edge"
