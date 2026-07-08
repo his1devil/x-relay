@@ -302,7 +302,11 @@ final class ThreadModel: ObservableObject {
         spans.append(["row": 4, "column": 0, "style_id": 3, "cell_width": 1, "text": " WARN "])
         spans.append(["row": 4, "column": 7, "style_id": 0, "cell_width": 1, "text": "highlighted badge on row 4"])
         for r in 6 ..< 28 {
-            spans.append(["row": r, "column": 0, "style_id": 0, "cell_width": 1, "text": String(format: "%3d", r) + "  0x" + String(r * 2654435761 % 0xFFFFFF, radix: 16, uppercase: true) + "  lorem ipsum grid line content"])
+            let base = String(format: "%3d", r) + "  0x" + String(r * 2654435761 % 0xFFFFFF, radix: 16, uppercase: true) + "  lorem ipsum grid line content"
+            spans.append(["row": r, "column": 0, "style_id": 0, "cell_width": 1, "text": base])
+            // Wide tail past column 200 — real desktop panes are 200+ cols;
+            // exercises horizontal scroll + fit-width overview.
+            spans.append(["row": r, "column": 200, "style_id": 4, "cell_width": 1, "text": "| wide col \(r) end"])
         }
         spans.append(["row": 28, "column": 0, "style_id": 1, "cell_width": 1, "text": "❯"])
         let obj: [String: Any] = ["styles": styles, "row_spans": spans, "rows": 30,

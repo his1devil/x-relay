@@ -26,15 +26,25 @@ struct MobileTerminalView: View {
             GeometryReader { geo in
                 if let g {
                     let cols = max(g.maxColumns, 20)
-                    let fitSize = max(7, min(20, (geo.size.width - 12) / CGFloat(cols) * 1.66))
-                    let fontSize = fitSize * zoom
+                    // READABLE-FIRST (Termius/Blink semantics): desktop panes
+                    // run 200+ columns — fitting those to a phone squeezes
+                    // type below legibility. Base is a readable 12pt unless
+                    // the pane is narrow enough to genuinely fit; horizontal
+                    // scroll covers the overflow, and double-tap toggles a
+                    // fit-width overview. zoom is the user multiplier on top.
+                    let fitWidthSize = (geo.size.width - 12) / CGFloat(cols) * 1.66
+                    let baseSize = fitWidthSize >= 9 ? min(20, fitWidthSize) : 12
+                    let fontSize = max(4, min(24, baseSize * zoom))
                     let cellW = ceil(fontSize * 0.602)
                     let cellH = ceil(fontSize * 1.28)
-                    let axes: Axis.Set = zoom > 1.01 ? [.vertical, .horizontal] : .vertical
+                    let contentW = CGFloat(cols) * cellW + 12
+                    // Horizontal pans whenever content overflows — NOT only
+                    // when zoomed (wide panes overflow at zoom 1 by design).
+                    let axes: Axis.Set = contentW > geo.size.width + 1 ? [.vertical, .horizontal] : .vertical
                     ScrollView(axes) {
                         TerminalCanvas(grid: g, fontSize: fontSize, cellW: cellW, cellH: cellH,
                                        selection: selectedRows)
-                            .frame(width: max(geo.size.width, CGFloat(cols) * cellW + 12),
+                            .frame(width: max(geo.size.width, contentW),
                                    height: CGFloat(g.totalRows) * cellH + 12)
                             .contentShape(Rectangle())
                             .gesture(
@@ -51,9 +61,18 @@ struct MobileTerminalView: View {
                                         }
                                     }
                             )
+                            .onTapGesture(count: 2) {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    let fitWidthSize = (geo.size.width - 12) / CGFloat(cols) * 1.66
+                                    let base: CGFloat = fitWidthSize >= 9 ? min(20, fitWidthSize) : 12
+                                    let overviewZoom = max(0.2, fitWidthSize / base)
+                                    zoom = abs(zoom - 1) < 0.05 ? overviewZoom : 1
+                                    pinchBase = zoom
+                                }
+                            }
                             .onTapGesture { selectedRows = nil }
                     }
-                    .defaultScrollAnchor(.bottom)
+                    .defaultScrollAnchor(.bottomLeading)
                 } else {
                     VStack(spacing: 8) {
                         ProgressView().tint(theme.blurple)
@@ -64,10 +83,9 @@ struct MobileTerminalView: View {
             }
             .simultaneousGesture(
                 MagnificationGesture()
-                    .onChanged { zoom = min(3, max(0.5, pinchBase * $0)) }
+                    .onChanged { zoom = min(3, max(0.2, pinchBase * $0)) }
                     .onEnded { _ in pinchBase = zoom }
             )
-            .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.15)) { zoom = 1; pinchBase = 1 } }
 
             if let sel = selectedRows, let g {
                 selectionBar(sel, grid: g)
