@@ -175,6 +175,15 @@ final class RelayClient: ObservableObject {
 
     // MARK: connection
 
+    /// One-time transport migration: plaintext ws:// on the bare relay IP is
+    /// killed by DPI middleboxes on corporate/carrier networks (HTTP to the
+    /// IP didn't even load). Existing pairings carry the old URL; rewrite
+    /// them to the TLS endpoint so nobody has to re-scan a QR.
+    static func migrated(_ url: URL) -> URL {
+        guard let host = url.host, host == "118.89.71.154" else { return url }
+        return URL(string: "wss://relay.zhanghuanyang.com") ?? url
+    }
+
     func connect() {
         guard let pairing else { return }
         // Idempotent: callers race (.task + scenePhase both fire on launch). A
@@ -184,7 +193,7 @@ final class RelayClient: ObservableObject {
         guard task == nil else { return }
         intentionalClose = false
         state = .connecting
-        let t = urlSession.webSocketTask(with: pairing.url)
+        let t = urlSession.webSocketTask(with: Self.migrated(pairing.url))
         t.maximumMessageSize = 32 * 1024 * 1024  // default is 1 MB — thread frames can exceed it
         task = t
         t.resume()

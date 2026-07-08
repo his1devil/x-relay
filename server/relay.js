@@ -161,13 +161,35 @@ setInterval(() => {
 }, 10000);
 
 // One HTTP+WS server per port, all sharing `rooms`.
+const handler = (req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("claude-remote relay ok\n");
+};
 for (const port of PORTS) {
-  const httpServer = http.createServer((req, res) => {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("claude-remote relay ok\n");
-  });
+  const httpServer = http.createServer(handler);
   const wss = new WebSocketServer({ server: httpServer });
   wss.on("connection", onConnection);
   httpServer.on("error", (e) => console.error(`[relay] port ${port} error:`, e.message));
   httpServer.listen(port, () => console.log(`[relay] listening on ws://0.0.0.0:${port}`));
+}
+
+// wss:// — plaintext ws on 443 gets killed by DPI middleboxes on corporate
+// and some carrier networks (the "stuck Reconnecting with zero [conn]"
+// signature). Real TLS on TLS_PORT is indistinguishable from ordinary
+// HTTPS. Enabled automatically when a cert exists.
+const TLS_PORT = Number(process.env.TLS_PORT || 443);
+const CERT_DIR = process.env.CERT_DIR || "/etc/letsencrypt/live/relay.zhanghuanyang.com";
+try {
+  const https = require("https");
+  const fs = require("fs");
+  const tlsServer = https.createServer({
+    cert: fs.readFileSync(`${CERT_DIR}/fullchain.pem`),
+    key: fs.readFileSync(`${CERT_DIR}/privkey.pem`),
+  }, handler);
+  const wssTls = new WebSocketServer({ server: tlsServer });
+  wssTls.on("connection", onConnection);
+  tlsServer.on("error", (e) => console.error(`[relay] tls ${TLS_PORT} error:`, e.message));
+  tlsServer.listen(TLS_PORT, () => console.log(`[relay] listening on wss://0.0.0.0:${TLS_PORT}`));
+} catch (e) {
+  console.log(`[relay] no TLS cert (${e.message}) — wss disabled`);
 }
