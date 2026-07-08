@@ -103,11 +103,13 @@ struct ExyteThreadView: View {
             Spacer(minLength: 4)
             // Terminal mirror only for drivable sessions — a preview session has no
             // live pane to mirror.
-            if session.isRemote && session.canDrive {
+            if (session.isRemote && session.canDrive)
+                || ProcessInfo.processInfo.environment["CR_TERM_MOCK"] == "1" {
                 Button { terminalMode.toggle() } label: {
                     Image(systemName: terminalMode ? "bubble.left.and.text.bubble.right" : "terminal")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(terminalMode ? theme.blurple : theme.sub)
+                        .accessibilityLabel("TerminalToggle")
                 }
                 .accessibilityLabel(terminalMode ? "Structured view" : "Terminal view")
             }

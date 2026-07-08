@@ -275,10 +275,41 @@ final class ThreadModel: ObservableObject {
     // MARK: terminal mirror (P4)
 
     func setTerminalMirror(_ on: Bool) {
+        if ProcessInfo.processInfo.environment["CR_TERM_MOCK"] == "1" {
+            gridFrame = on ? Self.mockGridFrame : nil
+            return
+        }
         guard isRemote else { return }
         if !on { gridFrame = nil }
         relay?.setMirror(id: sessionId, on: on)
     }
+
+    /// Sim-only render fixture: real render_grid_json schema, exercises
+    /// truecolor fg/bg, bold/italic/underline, cursor, wide rows.
+    static let mockGridFrame: String = {
+        var styles: [[String: Any]] = [
+            ["id": 0, "foreground": "#d4d4d4", "background": "#1e1e1e", "bold": false, "faint": false, "italic": false, "underline": false, "blink": false, "inverse": false, "invisible": false, "strikethrough": false, "overline": false],
+            ["id": 1, "foreground": "#4ec9b0", "background": "#1e1e1e", "bold": true, "faint": false, "italic": false, "underline": false, "blink": false, "inverse": false, "invisible": false, "strikethrough": false, "overline": false],
+            ["id": 2, "foreground": "#ce9178", "background": "#1e1e1e", "bold": false, "faint": false, "italic": true, "underline": false, "blink": false, "inverse": false, "invisible": false, "strikethrough": false, "overline": false],
+            ["id": 3, "foreground": "#1e1e1e", "background": "#dcdcaa", "bold": false, "faint": false, "italic": false, "underline": false, "blink": false, "inverse": false, "invisible": false, "strikethrough": false, "overline": false],
+            ["id": 4, "foreground": "#569cd6", "background": "#1e1e1e", "bold": false, "faint": false, "italic": false, "underline": true, "blink": false, "inverse": false, "invisible": false, "strikethrough": false, "overline": false],
+        ]
+        var spans: [[String: Any]] = []
+        spans.append(["row": 0, "column": 0, "style_id": 1, "cell_width": 1, "text": "❯ claude — HALX mobile terminal fixture"])
+        spans.append(["row": 2, "column": 0, "style_id": 0, "cell_width": 1, "text": "Reading "])
+        spans.append(["row": 2, "column": 8, "style_id": 4, "cell_width": 1, "text": "Sources/App/main.swift"])
+        spans.append(["row": 3, "column": 0, "style_id": 2, "cell_width": 1, "text": "  // colored italic comment span"])
+        spans.append(["row": 4, "column": 0, "style_id": 3, "cell_width": 1, "text": " WARN "])
+        spans.append(["row": 4, "column": 7, "style_id": 0, "cell_width": 1, "text": "highlighted badge on row 4"])
+        for r in 6 ..< 28 {
+            spans.append(["row": r, "column": 0, "style_id": 0, "cell_width": 1, "text": String(format: "%3d", r) + "  0x" + String(r * 2654435761 % 0xFFFFFF, radix: 16, uppercase: true) + "  lorem ipsum grid line content"])
+        }
+        spans.append(["row": 28, "column": 0, "style_id": 1, "cell_width": 1, "text": "❯"])
+        let obj: [String: Any] = ["styles": styles, "row_spans": spans, "rows": 30,
+                                  "cursor": ["row": 28, "column": 2, "visible": true]]
+        let d = try! JSONSerialization.data(withJSONObject: obj)
+        return String(data: d, encoding: .utf8)!
+    }()
 
     func sendTerminalText(_ text: String, enter: Bool) {
         guard isRemote else { return }
