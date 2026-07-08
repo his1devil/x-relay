@@ -179,9 +179,43 @@ final class RelayClient: ObservableObject {
     /// killed by DPI middleboxes on corporate/carrier networks (HTTP to the
     /// IP didn't even load). Existing pairings carry the old URL; rewrite
     /// them to the TLS endpoint so nobody has to re-scan a QR.
+    /// Candidate transports, ONE relay box (rooms don't bridge across
+    /// relays, so every candidate must terminate at the same node):
+    ///  1. wss on the domain — the good path; dead while the ICP-pending
+    ///     domain gets SNI-RST'd on EVERY port (yes, 8443 too)
+    ///  2. plaintext ws to the bare IP:8787 — no SNI, no Host, nothing for
+    ///     the middlebox to match; survives the block at home networks
+    /// The last URL that reached .online is remembered and tried first.
+    static let candidates: [URL] = [
+        URL(string: "wss://relay.zhanghuanyang.com")!,
+        URL(string: "ws://8.160.186.31:8787")!,
+    ]
+    private static let lastGoodKey = "cr.relay.lastGood"
+    private var candidateIndex = 0
+
+    func currentURL() -> URL {
+        if candidateIndex == 0, let saved = UserDefaults.standard.string(forKey: Self.lastGoodKey),
+           let u = URL(string: saved), Self.candidates.contains(u) {
+            return u
+        }
+        return Self.candidates[candidateIndex % Self.candidates.count]
+    }
+
+    func advanceCandidate() {
+        candidateIndex = (candidateIndex + 1) % Self.candidates.count
+    }
+
+    func markCandidateGood() {
+        UserDefaults.standard.set(currentURL().absoluteString, forKey: Self.lastGoodKey)
+    }
+
     static func migrated(_ url: URL) -> URL {
-        guard let host = url.host, host == "118.89.71.154" else { return url }
-        return URL(string: "wss://relay.zhanghuanyang.com") ?? url
+        // Legacy pairings (Tencent IP / the domain) all route into the
+        // candidate chain; custom relays (dev/self-hosted) pass through.
+        guard let host = url.host,
+              host == "118.89.71.154" || host == "relay.zhanghuanyang.com" || host == "8.160.186.31"
+        else { return url }
+        return candidates[0]
     }
 
     func connect() {
@@ -193,7 +227,8 @@ final class RelayClient: ObservableObject {
         guard task == nil else { return }
         intentionalClose = false
         state = .connecting
-        let t = urlSession.webSocketTask(with: Self.migrated(pairing.url))
+        let isManaged = Self.migrated(pairing.url) == Self.candidates[0]
+        let t = urlSession.webSocketTask(with: isManaged ? currentURL() : pairing.url)
         t.maximumMessageSize = 32 * 1024 * 1024  // default is 1 MB — thread frames can exceed it
         task = t
         t.resume()
@@ -245,6 +280,10 @@ final class RelayClient: ObservableObject {
         connectWatchdog?.cancel()
         guard !intentionalClose, pairing != nil else { return }
         reconnectAttempts += 1
+        // Rotate the transport candidate after a couple of failures on the
+        // current one — the domain's SNI-RST kills every handshake instantly,
+        // so waiting out full backoff on a dead candidate wastes minutes.
+        if reconnectAttempts % 2 == 0 { advanceCandidate() }
         // Only escalate to a visible message once a few quick retries have all
         // failed — i.e. the relay is genuinely unreachable, not just a blip. Cleared
         // the instant a frame arrives (receiveLoop success).
@@ -490,6 +529,7 @@ final class RelayClient: ObservableObject {
                     if self.state != .online {
                         self.lastError = ""
                         self.state = .online
+                        self.markCandidateGood()
                         self.reconnectAttempts = 0
                         self.connectWatchdog?.cancel()
                         self.requestListAndResubscribe()

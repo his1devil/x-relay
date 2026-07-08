@@ -27,16 +27,38 @@ struct ExyteThreadView: View {
         _adapter = StateObject(wrappedValue: ExyteThreadAdapter(model: m, session: session))
     }
 
+    @AppStorage("cr.terminalStyle") private var terminalStyle = "mobile"
+
     var body: some View {
         let _ = Perf.event("threadBody")
         VStack(spacing: 0) {
             header
             if terminalMode {
-                TerminalMirrorView(
-                    frame: model.gridFrame,
-                    onText: { text, enter in model.sendTerminalText(text, enter: enter) },
-                    onKeys: { keys in model.sendTerminalKeys(keys) }
-                )
+                VStack(spacing: 0) {
+                    // Mobile-first renderer is the default; the legacy mirror
+                    // stays one tap away (same frames, same send pipeline).
+                    Picker("", selection: $terminalStyle) {
+                        Text("Mobile").tag("mobile")
+                        Text("镜像").tag("mirror")
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 60)
+                    .padding(.vertical, 4)
+                    .background(Color.black)
+                    if terminalStyle == "mirror" {
+                        TerminalMirrorView(
+                            frame: model.gridFrame,
+                            onText: { text, enter in model.sendTerminalText(text, enter: enter) },
+                            onKeys: { keys in model.sendTerminalKeys(keys) }
+                        )
+                    } else {
+                        MobileTerminalView(
+                            frame: model.gridFrame,
+                            onText: { text, enter in model.sendTerminalText(text, enter: enter) },
+                            onKeys: { keys in model.sendTerminalKeys(keys) }
+                        )
+                    }
+                }
             } else {
                 ZStack {
                     ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
