@@ -65,6 +65,17 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
                 pan.delegate = self
                 scroll.addGestureRecognizer(pan)
                 scroll.panGestureRecognizer.require(toFail: pan)
+                // FIRST-CLASS edge swipe: users start the drawer drag at the
+                // very left edge — outside the list pan's comfort zone and
+                // flaky across iOS versions. A screen-edge recognizer on the
+                // WINDOW is the system-native way and always wins there.
+                if let window = self.window, window.gestureRecognizers?.contains(where: { $0.name == "cr-edge" }) != true {
+                    let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdge(_:)))
+                    edge.edges = .left
+                    edge.name = "cr-edge"
+                    edge.delegate = self
+                    window.addGestureRecognizer(edge)
+                }
                 installed = true
                 NSLog("[halx-catcher] installed on %@ h=%.0f", String(describing: type(of: scroll)), scroll.bounds.height)
                 return
@@ -75,6 +86,20 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.attemptInstall(retriesLeft: retriesLeft - 1)
+            }
+        }
+
+        @objc private func handleEdge(_ g: UIScreenEdgePanGestureRecognizer) {
+            switch g.state {
+            case .began:
+                onBegin?()
+            case .changed:
+                onTrack?(g.translation(in: g.view).x)
+            case .ended, .cancelled, .failed:
+                let t = g.translation(in: g.view).x
+                let v = g.velocity(in: g.view).x
+                onRelease?(t, v)
+            default: break
             }
         }
 
@@ -93,10 +118,25 @@ struct HorizontalSwipeCatcher: UIViewRepresentable {
         }
 
         override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            if g.name == "cr-edge" {
+                // The window-level edge pan must serve the ROOT screen only —
+                // deeper in the stack the left edge belongs to swipe-back.
+                return Self.navDepth(window?.rootViewController) <= 1
+            }
             guard let pan = g as? UIPanGestureRecognizer, let v = pan.view else { return false }
             let vel = pan.velocity(in: v)
             let t = pan.translation(in: v)
             return abs(vel.x) > abs(vel.y) * 1.6 && abs(t.x) >= abs(t.y)
+        }
+
+        private static func navDepth(_ vc: UIViewController?) -> Int {
+            guard let vc else { return 0 }
+            if let nav = vc as? UINavigationController { return nav.viewControllers.count }
+            for child in vc.children {
+                let d = navDepth(child)
+                if d > 0 { return d }
+            }
+            return 0
         }
 
         /// Tall AND actually on screen — the always-mounted rail hosts its own tall
