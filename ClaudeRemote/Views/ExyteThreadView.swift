@@ -7,7 +7,7 @@ import ExyteChat
 ///
 /// - `ExyteThreadAdapter` maps timeline → [Message] once per CONTENT change (not per
 ///   body eval) and carries per-row content stamps so only changed rows reload.
-/// - `ChatPane` is Equatable on the adapter revision: model churn that doesn't touch
+/// - `ChatPane` re-evaluates on the model revision: model churn that doesn't touch
 ///   the transcript (working flag, permissions, grid frames) skips the whole
 ///   ChatView re-init (and exyte's O(n) mapMessages) entirely.
 /// - `StatusStrip` observes the model directly, so it stays live even when the pane
@@ -15,7 +15,6 @@ import ExyteChat
 struct ExyteThreadView: View {
     let session: Session
     @StateObject private var model: ThreadModel
-    @StateObject private var adapter: ExyteThreadAdapter
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var terminalMode = false   // structured ⇄ raw terminal mirror (P4)
@@ -24,7 +23,6 @@ struct ExyteThreadView: View {
         self.session = session
         let m = ThreadModel(session: session, relay: relay)
         _model = StateObject(wrappedValue: m)
-        _adapter = StateObject(wrappedValue: ExyteThreadAdapter(model: m, session: session))
     }
 
     @AppStorage("cr.terminalStyle") private var terminalStyle = "mobile"
@@ -76,14 +74,14 @@ struct ExyteThreadView: View {
                 }
             } else {
                 ZStack {
-                    ChatPane(rev: adapter.rev, session: session, theme: theme, model: model, adapter: adapter)
+                    ChatPane(rev: model.revision, session: session, theme: theme, model: model)
                     if session.isRemote && !model.firstScreenReady {
                         MessageSkeleton()   // curtain: up until the newest ~1.5 screens are assembled
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .background(theme.screen)          // OPAQUE: the list assembling
                                                                // underneath must not shimmer through
                             .transition(.identity)             // and the un-cover is a hard cut
-                    } else if model.isLoading && adapter.messages.isEmpty {
+                    } else if model.isLoading && model.items.isEmpty {
                         MessageSkeleton()
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .background(theme.screen)
@@ -96,7 +94,6 @@ struct ExyteThreadView: View {
         .navigationBarHidden(true)
         .onChange(of: terminalMode) { _, on in model.setTerminalMirror(on) }
         .onAppear {
-            adapter.configureTwin(theme: theme, agent: session.agent)
             model.start()
             UserDefaults.standard.set(session.id, forKey: "cr.lastSessionId")   // drawer highlights it
         }
@@ -149,7 +146,6 @@ private struct ChatPane: View {
     // (a prepend parks in the buffer with NO reparse) — a plain `let` never
     // re-evaluated this pane, so the paging spinner could never appear.
     @ObservedObject var model: ThreadModel
-    @ObservedObject var adapter: ExyteThreadAdapter
 
     // Streaming-follow: when new content lands while the reader is up in history,
     // light a badge on the scroll-to-bottom button instead of yanking the scroll.
@@ -176,6 +172,7 @@ private struct ChatPane: View {
                     hasMoreHistory: model.hasMoreHistory,
                     loadingOlder: model.loadingOlder,
                     mountTick: model.mountTick,
+                    contentRevision: rev,
                     onPullHistory: { [weak model] in model?.pullOlderHistory() },
                     onPullSettled: { [weak model] in model?.executePull() },
                     onAtBottomChanged: { b in
@@ -217,46 +214,6 @@ private struct ChatPane: View {
     }
 }
 
-// MARK: - message cell (our rendering, O(1) lookup)
-
-private struct MessageCell: View {
-    let params: MessageBuilderParameters
-    @ObservedObject var adapter: ExyteThreadAdapter   // content channel: redraw in place
-    @ObservedObject var model: ThreadModel            // optimistic echo + upload thumbs
-    let theme: Theme
-    var session: Session
-
-    var body: some View {
-        let _ = Perf.event("cellHost", params.message.id)
-        let fresh = params.message.id == "cr-optimistic"
-            || (params.message.id == adapter.lastAppendedId
-                && Date().timeIntervalSince(adapter.lastAppendAt) < 1.5)
-        Group {
-            if params.message.id == "cr-optimistic" {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !model.optimisticThumbs.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(Array(model.optimisticThumbs.enumerated()), id: \.offset) { _, img in
-                                Image(uiImage: img).resizable().scaledToFill()
-                                    .frame(width: 116, height: 116)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                            }
-                        }
-                        .padding(.leading, 18)
-                    }
-                    UserMessageView(message: UserMessage(id: "cr-optimistic", text: adapter.optimisticText ?? "", time: nil))
-                }
-                .opacity(0.6)
-            } else if let item = adapter.itemsById[params.message.id] {
-                TimelineItemView(item: item, agent: session.agent)
-            } else {
-                EmptyView()
-            }
-        }
-        .environment(\.theme, theme)   // env doesn't cross the UITableView boundary
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
 
 // MARK: - loading skeleton (thread opening)
 

@@ -34,6 +34,11 @@ struct NativeTimelineList: View {
     let hasMoreHistory: Bool
     let loadingOlder: Bool
     let mountTick: Int
+    /// Bumped on every (re)parse — including IN-PLACE growth of the tail
+    /// assistant group, which items.last?.id can never see. Drives streaming
+    /// follow for the scrolled-up-then-returned-to-bottom mode where the
+    /// pinned anchor no longer applies.
+    let contentRevision: Int
     let onPullHistory: () -> Void
     let onPullSettled: () -> Void
     let onAtBottomChanged: (Bool) -> Void
@@ -243,13 +248,15 @@ struct NativeTimelineList: View {
                 }
             }
 
-            .onChange(of: items.last?.id) { _, newLast in
-                // Follow the stream only when parked at the bottom.
-                if atBottom, let newLast {
+            .onChange(of: contentRevision) { _, _ in
+                // Follow the stream only when parked at the bottom. Revision
+                // moves on every parse — new rows AND in-place tail growth
+                // (items.last?.id misses the latter; anchor-pinned mode
+                // already follows, this covers the posID return-to-bottom mode).
+                if atBottom {
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo("cr-bottom", anchor: .bottom)
                     }
-                    _ = newLast
                 }
             }
             .onChange(of: optimisticText) { _, v in
@@ -266,6 +273,12 @@ struct NativeTimelineList: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                kbGuard = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
+                // Interactive dismiss drives continuous frame changes that
+                // show/hide never report — same sentinel protection applies.
                 kbGuard = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
             }
