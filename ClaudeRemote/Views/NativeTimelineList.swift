@@ -11,6 +11,14 @@ import SwiftUI
 /// `isTracking` — a finger physically on the glass. Momentum rubber-band
 /// (isTracking == false) can spike deep past any threshold; a synthetic or
 /// real flick must never mount history.
+final class KeyboardTapDismiss: NSObject {
+    static let shared = KeyboardTapDismiss()
+    @objc func fire() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+}
+
 private struct ScrollViewIntrospector: UIViewRepresentable {
     let onResolve: (UIScrollView) -> Void
     func makeUIView(context: Context) -> UIView {
@@ -65,18 +73,50 @@ struct NativeTimelineList: View {
     /// Scroll to the newest message and RETRY until the bottom sentinel
     /// confirms (one-shot scrollTo raced iOS 26's layout cadence and stalled
     /// mid-list on some sessions).
+    @State private var settleInFlight = false
+
+    /// SINGLE-FLIGHT: entry backfill mounts in many batches and every batch
+    /// used to start a FRESH 40-shot retry loop — overlapping loops hammered
+    /// scrollTo every 60ms for tens of seconds and wedged the scroll system
+    /// (frozen list, idle main thread, animation manager parked on a
+    /// semaphore). One loop at a time, capped at 15, re-arm only after it
+    /// drains.
     private func settleToBottom(_ proxy: ScrollViewProxy) {
+        guard !settleInFlight else { return }
+        settleInFlight = true
         settleTries = 0
         func attempt() {
             proxy.scrollTo("cr-bottom", anchor: .bottom)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                if !atBottom, settleTries < 40 {
+                if !atBottom, settleTries < 15 {
                     settleTries += 1
                     attempt()
+                } else {
+                    settleInFlight = false
                 }
             }
         }
         attempt()
+    }
+
+    /// Keyboard transitions stay inside the single-authority architecture:
+    /// no offset math, only ANCHOR MODE selection. In pinned mode
+    /// (posID == nil) defaultScrollAnchor(.bottom) rides the inset change
+    /// automatically. But after the reader visited history and returned,
+    /// posID holds a TOP-anchored row — the keyboard then resizes around
+    /// that row and the bottom slips under/away (the "不跟随" report).
+    /// At-bottom + keyboard transition ⇒ drop back to pinned; the system
+    /// keeps the tail glued through the whole animation. kbGuard still
+    /// shields the sentinel from transition misreads.
+    private func keyboardTransition() {
+        kbGuard = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
+        // At-bottom keyboard transition: drop back to pinned so the bottom
+        // anchor rides the inset change (posID holds a TOP-anchored row and
+        // lets the tail slip under the keyboard otherwise).
+        if atBottom, posID != nil {
+            posID = nil
+        }
     }
 
     private func showEndHint() {
@@ -93,7 +133,17 @@ struct NativeTimelineList: View {
                     // top (rubber-band). Passing the threshold arms the pull;
                     // one pull mounts exactly one chunk — strictly user-driven.
                     Color.clear.frame(height: 1)
-                        .background(ScrollViewIntrospector { sv in scrollViewRef = sv })
+                        .background(ScrollViewIntrospector { sv in
+                            scrollViewRef = sv
+                            if sv.gestureRecognizers?.contains(where: { $0.name == "cr-kbtap" }) != true {
+                                let tap = UITapGestureRecognizer(target: KeyboardTapDismiss.shared,
+                                                                 action: #selector(KeyboardTapDismiss.fire))
+                                tap.name = "cr-kbtap"
+                                tap.cancelsTouchesInView = false
+                                tap.requiresExclusiveTouchType = false
+                                sv.addGestureRecognizer(tap)
+                            }
+                        })
                         .overlay {
                             GeometryReader { g in
                                 Color.clear.onChange(of: g.frame(in: .named("cr-scroll")).minY) { _, y in
@@ -199,10 +249,10 @@ struct NativeTimelineList: View {
                     settleToBottom(proxy)
                 }
             }
-            .simultaneousGesture(TapGesture().onEnded {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                to: nil, from: nil, for: nil)
-            })
+            // Tap-anywhere keyboard dismiss lives at the UIKit level (see the
+            // introspector resolve) — a SwiftUI simultaneousGesture(TapGesture)
+            // on the ScrollView KILLED its pan entirely on iOS 26 (list froze
+            // for real fingers; taps still worked, which disguised it).
             .background(theme.screen)
             .overlay(alignment: .top) {
                 if loadingOlder || endHintVisible {
@@ -249,38 +299,34 @@ struct NativeTimelineList: View {
             }
 
             .onChange(of: contentRevision) { _, _ in
-                // Follow the stream only when parked at the bottom. Revision
-                // moves on every parse — new rows AND in-place tail growth
-                // (items.last?.id misses the latter; anchor-pinned mode
-                // already follows, this covers the posID return-to-bottom mode).
-                if atBottom {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("cr-bottom", anchor: .bottom)
-                    }
+                // Follow the stream only when parked at the bottom — and only
+                // AFTER the user has scrolled (pinned mode already follows via
+                // the bottom anchor; entry-time backfill lands in a dozen
+                // batches and firing an ANIMATED scrollTo per batch deadlocked
+                // iOS 26's scroll system: frozen list, idle main thread, the
+                // animation manager parked on a semaphore. Plain scrollTo,
+                // no animation — repeated calls must stay coalescible).
+                if atBottom, userHasScrolled {
+                    proxy.scrollTo("cr-bottom", anchor: .bottom)
                 }
             }
             .onChange(of: optimisticText) { _, v in
                 if v != nil {
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(nil) {
                         proxy.scrollTo("cr-bottom", anchor: .bottom)
                     }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                // Inset architecture handles the geometry; we only guard the
-                // sentinel misreads during the transition.
-                kbGuard = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
+                keyboardTransition()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                kbGuard = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
+                keyboardTransition()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
                 // Interactive dismiss drives continuous frame changes that
-                // show/hide never report — same sentinel protection applies.
-                kbGuard = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { kbGuard = false }
+                // show/hide never report — same treatment.
+                keyboardTransition()
             }
             .onChange(of: jumpToBottom) { _, go in
                 if go {

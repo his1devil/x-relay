@@ -266,8 +266,19 @@ struct MarkdownSheet: View {
 enum UserImageCache {
     private static let cache = NSCache<NSString, UIImage>()
 
+    private static func key(_ data: Data) -> NSString {
+        "\(data.count)-\(data.prefix(64).hashValue)" as NSString
+    }
+
+    /// Cache-only lookup — safe in a view body (no decode).
+    static func cached(_ data: Data) -> UIImage? {
+        cache.object(forKey: key(data))
+    }
+
+    static func taskKey(_ data: Data) -> String { key(data) as String }
+
     static func thumb(for data: Data) -> UIImage? {
-        let key = "\(data.count)-\(data.prefix(64).hashValue)" as NSString
+        let key = key(data)
         if let hit = cache.object(forKey: key) { return hit }
         guard let img = UIImage(data: data) else { return nil }
         let maxEdge: CGFloat = 700
@@ -282,6 +293,48 @@ enum UserImageCache {
         }
         cache.setObject(out, forKey: key)
         return out
+    }
+}
+
+/// Async transcript image thumb: the row shows a FIXED-SIZE placeholder and
+/// decodes off the main thread. Synchronous UIImage decode in the row body
+/// froze the whole list the moment a lazy row with a big image (e.g. a
+/// 438×6144 screenshot) scrolled into range — the field "上滑卡死/键盘无响应".
+private struct TranscriptThumb: View {
+    let data: Data
+    let side: CGFloat
+    var onTap: (UIImage) -> Void
+    @Environment(\.theme) private var theme
+    @State private var img: UIImage?
+
+    var body: some View {
+        Group {
+            if let img {
+                Button { onTap(img) } label: {
+                    Image(uiImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: side, maxHeight: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            } else {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.card)
+                    .frame(width: side, height: side)
+                    .overlay { ProgressView().tint(theme.faint) }
+            }
+        }
+        .task(id: UserImageCache.taskKey(data)) {
+            if img == nil {
+                if let hit = UserImageCache.cached(data) { img = hit; return }
+                let d = data
+                let decoded = await Task.detached(priority: .userInitiated) {
+                    UserImageCache.thumb(for: d)
+                }.value
+                if !Task.isCancelled { img = decoded }
+            }
+        }
     }
 }
 
@@ -359,19 +412,13 @@ struct UserMessageView: View {
     /// Discord-style inline previews: one image → large rounded preview; several →
     /// two-up grid. Tap opens full-screen.
     private var imageGrid: some View {
-        let thumbs = message.images.compactMap { UserImageCache.thumb(for: $0) }
-        let single = thumbs.count == 1
+        let single = message.images.count == 1
         return LazyVGrid(columns: [GridItem(.flexible(), spacing: 6)] + (single ? [] : [GridItem(.flexible())]),
                          spacing: 6) {
-            ForEach(Array(thumbs.enumerated()), id: \.offset) { _, img in
-                Button { zoomed = IdentifiedImage(image: img) } label: {
-                    Image(uiImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(maxWidth: single ? 240 : 132, maxHeight: single ? 240 : 132)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            ForEach(Array(message.images.enumerated()), id: \.offset) { _, data in
+                TranscriptThumb(data: data, side: single ? 240 : 132) { img in
+                    zoomed = IdentifiedImage(image: img)
                 }
-                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: single ? 240 : 272)
